@@ -30,9 +30,41 @@ def test_unhandled_infra_error_maps_to_korean_detail(monkeypatch):
     assert isinstance(body.get("detail"), str)
     # 영문 기본 메시지가 아니라 한국어 계약 메시지여야 한다.
     assert body["detail"] != "Internal Server Error"
+    assert body["detail"] == "일시적인 서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
     # 내부 예외 문구/스택 추적이 클라이언트로 새지 않아야 한다.
     assert "simulated DB pool timeout" not in body["detail"]
     assert "Traceback" not in body["detail"]
+
+
+def test_500_response_carries_cors_headers_for_allowed_origin(monkeypatch):
+    # 배포 교차오리진 시나리오: 브라우저가 500 의 한국어 {detail} 를 읽으려면 500 응답에도
+    # access-control-allow-origin 이 있어야 한다. 핸들러가 CORSMiddleware 바깥이라 직접 부여함.
+    def boom():
+        raise RuntimeError("simulated DB down")
+
+    monkeypatch.setattr(refdata_db, "fetch_departments", boom)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    # 기본 허용 오리진(http://localhost:3000)으로 500 을 유발.
+    resp = client.get("/departments", headers={"Origin": "http://localhost:3000"})
+
+    assert resp.status_code == 500
+    # 허용 오리진이면 500 에도 CORS 헤더가 붙어 브라우저가 응답을 차단하지 않는다.
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_500_response_no_cors_headers_for_disallowed_origin(monkeypatch):
+    # 허용되지 않은 오리진에는 CORS 헤더를 부여하지 않는다(CORSMiddleware 와 동일 규칙).
+    def boom():
+        raise RuntimeError("simulated DB down")
+
+    monkeypatch.setattr(refdata_db, "fetch_departments", boom)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/departments", headers={"Origin": "https://evil.example.com"})
+
+    assert resp.status_code == 500
+    assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
 
 
 def test_http_exception_still_returns_detail_unchanged():

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,6 +14,32 @@ from app.db.pool import close_pool, init_pool
 from app.routers import refdata
 
 logger = logging.getLogger("app")
+
+# CORSMiddleware 는 이 미들웨어를 통과하는 정상 응답에만 CORS 헤더를 붙인다. 그러나 미처리
+# 예외로 생기는 500 은 최외곽 ServerErrorMiddleware 에서 CORSMiddleware '바깥'으로 나가므로
+# access-control-allow-origin 이 빠진다 → 배포 교차오리진(Vercel→Railway)에서 브라우저가 500 을
+# 차단해 클라이언트가 한국어 {detail} 을 못 읽는다. 전역 핸들러가 허용 오리진이면 직접 부여한다.
+_cors_origin_regex = re.compile(settings.cors_origin_regex) if settings.cors_origin_regex else None
+
+
+def _cors_allow_headers(request: Request) -> dict[str, str]:
+    """허용된 Origin 이면 CORSMiddleware 와 동일한 규칙으로 CORS 응답 헤더를 만든다(아니면 빈 dict)."""
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    allowed = (
+        "*" in settings.cors_origins
+        or origin in settings.cors_origins
+        or (_cors_origin_regex is not None and _cors_origin_regex.fullmatch(origin) is not None)
+    )
+    if not allowed:
+        return {}
+    # allow_credentials=True 라 와일드카드가 아니라 매칭된 오리진을 그대로 echo 한다(CORSMiddleware 동일).
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 
 @asynccontextmanager
@@ -51,6 +78,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return JSONResponse(
         status_code=500,
         content={"detail": "일시적인 서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요."},
+        headers=_cors_allow_headers(request),
     )
 
 

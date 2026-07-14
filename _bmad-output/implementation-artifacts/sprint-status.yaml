@@ -51,7 +51,7 @@ development_status:
   # Epic 1: 진입 & 환자 관리 (걷는 뼈대 + 배포)
   epic-1: in-progress
   1-1-로컬-수직-슬라이스: done
-  1-2-배포-vercel-railway-rls-실증: in-progress
+  1-2-배포-vercel-railway-rls-실증: done
   1-3-직원-신규-환자-등록: backlog
   1-4-직원-환자-목록-이름-검색: backlog
   1-5-환자-신원-선택-역할-컨텍스트-바: backlog
