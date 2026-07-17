@@ -1,5 +1,18 @@
 # Deferred Work
 
+## Deferred from: code review of 1-4-직원-환자-목록-이름-검색 (2026-07-16)
+
+- **GET /patients 전체 PII 노출·이름 열거 가능** — `GET /patients`가 인증 없이 모든 환자의 이름·생년월일·연락처를 반환하고 `?search=`로 이름 열거가 가능하다. 무인증 데모 설계(역할 선택·API 필터, AD-7 deny-by-default RLS + AD-8 "앱 레벨 필터, 보안 아님")와 정합하며 1.4가 만든 회귀는 아니나, 1.4가 공개 URL에서 환자 명부 + 자유 텍스트 PII 검색을 처음 노출한다. 데모를 넘어 배포 시 실제 인증·권한(아키텍처 Deferred의 "실제 인증·DB 레벨 격리") 결정 필요. [backend/app/routers/patients.py]
+- **검색어 LIKE 와일드카드 미이스케이프(코드 리뷰에서 패치 검토)** — `fetch_patients`가 `f"%{search}%"`로 패턴을 만들어 `%`/`_`/`\`가 그대로 LIKE 메타문자로 작동(파라미터화라 injection은 없음). 패치로 처리하지 않으면 남길 항목: `\ % _` 이스케이프 + `ESCAPE '\'`. [backend/app/db/patients.py]
+- **한글 NFC/NFD 정규화 불일치** — ILIKE가 코드포인트 비교라, 분해형(NFD, 일부 macOS IME) 입력이 조합형(NFC) 저장 이름과 매칭되지 않아 "결과 없음"으로 보일 수 있다. 서버/클라에서 검색어·비교 대상을 `.normalize("NFC")`로 정규화하면 해소. 데모는 대개 NFC라 저위험. [backend/app/db/patients.py, frontend/lib/api.ts]
+- **검색어 최대 길이 제한 없음** — 라우터 `search: str | None`(max_length 없음)·검색 `<Input>`(maxLength 없음)이라 초대형 문자열을 직접 API로 보내면 비싼 전체 스캔 LIKE가 될 수 있다(경미한 DoS 여지). 데모 저위험. param/input에 상한 부여로 하드닝. [backend/app/routers/patients.py, frontend/app/staff/patients/page.tsx]
+- **계약 테스트가 실제 `date` 직렬화 미검증** — `test_patients.py`의 fake가 `birth_date`를 이미 문자열("YYYY-MM-DD")로 반환해, 운영에서 psycopg가 주는 `datetime.date`→ISO 직렬화(PatientOut)가 테스트로 커버되지 않는다. fake가 실제 `datetime.date`를 반환하는 케이스 1건 추가로 하드닝(POST 테스트도 동일 패턴이라 함께 고려). [backend/tests/test_patients.py]
+
+## Deferred from: code review of 1-3-직원-신규-환자-등록 (2026-07-16)
+
+- **birth_date 미래·비현실 날짜 허용** — `POST /patients`의 `birth_date`(Pydantic `date`)와 등록 폼(`<input type="date">`)이 `2999-01-01` 같은 미래/비현실 생년월일을 검증 없이 저장한다. 데모 범위상 경미하고 스펙 미요구. 향후 프런트 `max={오늘}` + 백엔드 범위 검증(예: 1900~오늘)으로 하드닝. [backend/app/schemas/patients.py, frontend/app/staff/patients/new/page.tsx]
+- **환자 등록 폼 이중 제출 재진입 가드** — `handleSubmit`이 `disabled={submitting}`에만 의존해, 상태 커밋 전 빠른 더블클릭/더블-Enter 창에서 두 번 POST될 이론적 여지(중복 환자 행). 표준 disabled 패턴이 있어 데모엔 충분하나, 확실히 막으려면 `submittingRef`(useRef) 가드 추가. [frontend/app/staff/patients/new/page.tsx]
+
 ## Deferred from: code review of 1-2-배포-vercel-railway-rls-실증 (2026-07-14)
 
 - **`railway.json` `$PORT` startCommand 하위경로 미적용** — Railway가 `backend/railway.json`을 Root Directory(`backend`) 밖에서 못 읽어, 커밋한 `uvicorn ... --port $PORT` 명령 대신 Railpack 기본 명령이 실행돼 앱이 포트 **8080** 고정 바인딩. 현재 Railway 도메인 타깃 포트를 **8080**에 수동 정렬해 동작 중. 재배포/포트 변경 시 이 정렬이 깨지면 502 발생 가능. 정리: 대시보드 **Custom Start Command**(`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) 설정 + 도메인 자동 포트로 전환. [backend/railway.json]

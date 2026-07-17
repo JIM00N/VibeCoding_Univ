@@ -1,5 +1,7 @@
 // 직원 화면 (FR-3). [직원] 선택 시 별도 신원 선택 없이 전체 데이터 접근으로 진입한다.
 // Story 1.1 은 진입·앱 셸까지. 등록/검색/예약 관리는 후속 스토리에서 연결.
+import Link from "next/link";
+
 import { RoleContextBar } from "@/components/role-context-bar";
 import { Card } from "@/components/ui/card";
 
@@ -14,12 +16,22 @@ export default function StaffHome() {
         </p>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <Card className="p-5">
-            <h2 className="font-semibold">환자 등록·검색</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              다음 스토리에서 연결돼요. (Story 1.3 · 1.4)
-            </p>
-          </Card>
+          <Link href="/staff/patients/new" className="block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <Card className="p-5 transition-colors hover:bg-accent">
+              <h2 className="font-semibold">신규 환자 등록</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                처음 온 환자를 이름·생년월일·성별·연락처로 등록해요.
+              </p>
+            </Card>
+          </Link>
+          <Link href="/staff/patients" className="block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <Card className="p-5 transition-colors hover:bg-accent">
+              <h2 className="font-semibold">환자 목록·검색</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                등록된 환자를 목록으로 보고 이름으로 찾아요.
+              </p>
+            </Card>
+          </Link>
           <Card className="p-5">
             <h2 className="font-semibold">예약 관리</h2>
             <p className="mt-1 text-sm text-muted-foreground">Epic 2 에서 연결돼요.</p>
