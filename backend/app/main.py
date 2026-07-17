@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db.pool import close_pool, init_pool
-from app.routers import refdata
+from app.routers import patients, refdata
 
 logger = logging.getLogger("app")
 
@@ -63,6 +63,7 @@ app.add_middleware(
 )
 
 app.include_router(refdata.router)
+app.include_router(patients.router)
 
 
 @app.exception_handler(Exception)

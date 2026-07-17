@@ -12,6 +12,23 @@ const API_BASE = (RAW_BASE && RAW_BASE.trim() ? RAW_BASE.trim() : DEFAULT_API_BA
 // 리소스별 정규 응답 모델(FK 정수 id + 평평한 표시 필드, AD-10).
 export type Department = { id: number; name: string };
 
+// 환자 정규 응답 모델. birth_date 는 ISO 날짜 문자열("YYYY-MM-DD") 또는 null.
+export type Patient = {
+  id: number;
+  name: string;
+  birth_date: string | null;
+  gender: string | null;
+  phone: string | null;
+};
+
+// 환자 등록 요청. name 만 필수, 나머지는 선택(비우면 null 전송).
+export type PatientCreate = {
+  name: string;
+  birth_date?: string | null;
+  gender?: string | null;
+  phone?: string | null;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -59,6 +76,22 @@ export const api = {
   getDepartments: async (): Promise<Department[]> => {
     const data = await request<Department[]>("/departments");
     // 서버가 배열이 아닌 값(null·객체)을 주더라도 화면이 무한 로딩/빈 카드에 빠지지 않게 정규화.
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 신규 환자 등록(FR-4). 성공 시 생성된 환자(정규 모델)를 돌려준다. 오류는 request 가 한국어로 던진다. */
+  createPatient: (payload: PatientCreate): Promise<Patient> =>
+    request<Patient>("/patients", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** 환자 목록·이름 검색(FR-5). search 있으면 ?search= 로 서버측 부분 일치 필터(클라 필터 아님). */
+  getPatients: async (search?: string): Promise<Patient[]> => {
+    const term = search?.trim();
+    const query = term ? `?search=${encodeURIComponent(term)}` : "";
+    const data = await request<Patient[]>(`/patients${query}`);
+    // getDepartments 와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
     return Array.isArray(data) ? data : [];
   },
 };
