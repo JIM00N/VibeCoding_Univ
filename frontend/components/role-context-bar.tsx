@@ -1,5 +1,6 @@
 // 역할 컨텍스트 바 (UX-DR4) — 상단 고정. 현재 역할 + (선택 환자) + 전환 액션.
-// Story 1.1 은 위치·전환만 확정. 선택 환자 유지/전환은 Story 1.5 에서 확장.
+// prop-driven 으로 유지한다 — 선택 환자는 환자 페이지가 usePatientIdentity() 로 읽어 내려준다.
+// 바가 직접 신원 스토어를 읽으면 직원 화면까지 환자 개념을 알게 된다(직원 3화면이 이 바를 쓴다).
 import Link from "next/link";
 
 import { buttonVariants } from "@/components/ui/button";
@@ -7,9 +8,18 @@ import { buttonVariants } from "@/components/ui/button";
 export function RoleContextBar({
   role,
   patientName,
+  patientAction = "switch",
 }: {
   role: "환자" | "직원";
   patientName?: string;
+  /**
+   * 선택 환자가 있을 때 제공할 신원 액션. 이름 표시와 **분리**돼 있다 —
+   * 묶어두면 신원 선택 화면에서 이름을 보여주려는 순간 자기 자신을 가리키는 링크가 따라온다.
+   * - "switch": 다른 환자로 전환(→ /patient/select) — 환자 홈 기본값
+   * - "back": 환자 홈으로 복귀(→ /patient) — 신원 선택 화면에서 되돌아갈 때
+   * - "none": 액션 없음
+   */
+  patientAction?: "switch" | "back" | "none";
 }) {
   return (
     <header className="sticky top-0 z-10 flex items-center justify-between border-b bg-background/95 px-6 py-3 backdrop-blur">
@@ -23,9 +33,25 @@ export function RoleContextBar({
           <span className="text-muted-foreground">· {patientName}님</span>
         ) : null}
       </div>
-      <Link href="/" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-        역할 바꾸기
-      </Link>
+      <div className="flex items-center gap-1">
+        {/* 신원 액션은 이름 표시와 독립이다(직원 화면엔 신원 개념이 없어 기본적으로 안 뜬다). */}
+        {patientName && patientAction === "switch" ? (
+          <Link
+            href="/patient/select"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            다른 환자
+          </Link>
+        ) : null}
+        {patientName && patientAction === "back" ? (
+          <Link href="/patient" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            돌아가기
+          </Link>
+        ) : null}
+        <Link href="/" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+          역할 바꾸기
+        </Link>
+      </div>
     </header>
   );
 }

@@ -1,5 +1,12 @@
 # Deferred Work
 
+## Deferred from: code review of 1-5-환자-신원-선택-역할-컨텍스트-바 (2026-07-17)
+
+- **저장된 신원을 서버와 대조하지 않음** — `usePatientIdentity()` 가 localStorage 원문을 파싱해 그대로 돌려줄 뿐 `GET /patients` 로 재검증하지 않는다. DB 재시드(`db/seed/004_seed.sql` 의 truncate·restart identity)나 환자 삭제 후 `id=1` 이 다른 사람에게 재할당되면, 브라우저는 `{"id":1,"name":"이수민"}` 을 계속 들고 있어 **이름은 이수민, 데이터는 남의 것**인 무성 불일치가 된다(Epic 4 의 `?patient_id=1` 이 그 id 를 쓴다). 저장된 이름은 만료 없는 PII 사본이기도 하다. 하드닝: 선택 화면이 목록을 받은 뒤 `if (patient && !rows.some(r => r.id === patient.id)) clearPatient()` 로 정리(현재 미사용인 `clearPatient` 를 여기서 쓰면 됨). 단 `/patient` 직접 진입 경로는 여전히 남으므로 Epic 4 의 실데이터 조회에서 근본 처리. [frontend/lib/patient-identity.ts, frontend/app/patient/select/page.tsx]
+- **`clearPatient` 소비처 0 · 신원을 지우는 UI 경로 없음** — '다른 환자'는 신원을 *교체*할 뿐 지우지 않고, '역할 바꾸기'도 지우지 않는다. 공용 단말에서 앞 사람 신원(이름=PII)이 남는다. 신원 삭제는 이 스토리 AC 밖이라 defer. 배선 시 저장소 예외 방향(위 패치의 `storageUsable` 플래그)을 함께 고려할 것. [frontend/lib/patient-identity.ts]
+- **가드 대기 화면·스켈레톤의 스크린리더 침묵** — `/patient` 의 재수화 대기 셸이 내용 없는 `<main aria-busy="true" />` 라 비시각 사용자에겐 '로딩 중'인지 '빈 페이지'인지 단서가 없고, 선택 화면 스켈레톤은 `aria-hidden` + 목록 컨테이너에 `aria-live` 가 없어 목록 도착이 통지되지 않는다. 1.4 의 `ListSkeleton` 도 동일 패턴이라 두 화면을 함께 하드닝하는 게 일관적(visually-hidden 상태 텍스트 + `aria-live="polite"`). [frontend/app/patient/page.tsx, frontend/app/patient/select/page.tsx, frontend/app/staff/patients/page.tsx]
+- **데모 고지가 `/patient` 에 없어 복귀 사용자는 다시 못 봄** — 1.5 가 고지를 `/patient` 에서 걷어내 `/patient/select` 배너로 옮겼다(UX 스파인의 State Patterns 가 고지를 신원 선택 화면에 배치하므로 AC3·스파인 준수). 다만 신원이 영속되므로 북마크·새로고침으로 `/patient` 에 직접 들어오는 정상 경로는 고지를 두 번 다시 만나지 않는다. **Story 4.1 이 이 화면에 실제 예약·진료 기록을 올릴 때** 한 줄 고지 상시 노출을 재검토할 것(AD-8 "UI에서 분명히 한다"). [frontend/app/patient/page.tsx]
+
 ## Deferred from: code review of 1-4-직원-환자-목록-이름-검색 (2026-07-16)
 
 - **GET /patients 전체 PII 노출·이름 열거 가능** — `GET /patients`가 인증 없이 모든 환자의 이름·생년월일·연락처를 반환하고 `?search=`로 이름 열거가 가능하다. 무인증 데모 설계(역할 선택·API 필터, AD-7 deny-by-default RLS + AD-8 "앱 레벨 필터, 보안 아님")와 정합하며 1.4가 만든 회귀는 아니나, 1.4가 공개 URL에서 환자 명부 + 자유 텍스트 PII 검색을 처음 노출한다. 데모를 넘어 배포 시 실제 인증·권한(아키텍처 Deferred의 "실제 인증·DB 레벨 격리") 결정 필요. [backend/app/routers/patients.py]
