@@ -29,6 +29,40 @@ export type PatientCreate = {
   phone?: string | null;
 };
 
+// 의사 정규 응답 모델(AD-10). hospital_department 소속 의사. FK 정수 id + 평평한 표시 필드.
+export type Doctor = {
+  id: number;
+  name: string;
+  hospital_department_id: number;
+  department_name: string;
+};
+
+// 예약 상태(스파인 Consistency) — 한국어 문자열 그대로. 배지·목록이 이 값으로 매핑.
+export type AppointmentStatus = "대기" | "확정" | "완료" | "취소";
+
+// 예약 정규 응답 모델(AD-10). 연관은 FK 정수 id + 평평한 표시 필드(nested 금지).
+// reserved_at 은 ISO-8601 UTC 문자열. 생성 직후 status 는 "대기".
+export type Appointment = {
+  id: number;
+  patient_id: number;
+  hospital_department_id: number;
+  doctor_id: number | null;
+  reserved_at: string;
+  status: AppointmentStatus;
+  patient_name: string;
+  doctor_name: string | null;
+  department_name: string;
+};
+
+// 예약 생성 요청(FR-6, P0). 담당 의사 직접 선택 필수라 doctor_id 항상 채워짐.
+// reserved_at 은 30분 격자 슬롯의 ISO-8601 UTC(백엔드 to_slot() 재검증).
+export type AppointmentCreate = {
+  patient_id: number;
+  hospital_department_id: number;
+  doctor_id: number;
+  reserved_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -94,4 +128,21 @@ export const api = {
     // getDepartments 와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
     return Array.isArray(data) ? data : [];
   },
+
+  /** 진료과 소속 의사 목록(FR-6). 진료과 선택 후 담당 의사 드롭다운을 채운다. */
+  getDoctors: async (hospitalDepartmentId: number): Promise<Doctor[]> => {
+    const data = await request<Doctor[]>(
+      `/doctors?hospital_department_id=${encodeURIComponent(String(hospitalDepartmentId))}`,
+    );
+    // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 예약 생성(FR-6, P0). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다.
+   *  오류는 request 가 4xx {detail} 한국어로 던진다(AD-10). 슬롯 충돌 검사는 Epic 5. */
+  createAppointment: (payload: AppointmentCreate): Promise<Appointment> =>
+    request<Appointment>("/appointments", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };

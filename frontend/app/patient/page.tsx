@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { RoleContextBar } from "@/components/role-context-bar";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { usePatientIdentity } from "@/lib/patient-identity";
 
@@ -43,7 +44,18 @@ export default function PatientHome() {
         <p className="mt-2 text-muted-foreground">
           앞으로 예약과 진료 기록을 여기서 확인하시게 될 거예요.
         </p>
-        <Card className="mt-6 p-5">
+        <Card className="mt-6 gap-3 p-5">
+          <div>
+            <p className="font-semibold">진료 예약</p>
+            <p className="text-sm text-muted-foreground">
+              진료과와 담당 의사, 시간을 골라 예약하실 수 있어요.
+            </p>
+          </div>
+          <Button className="w-fit" onClick={() => router.push("/patient/book")}>
+            예약 잡기
+          </Button>
+        </Card>
+        <Card className="mt-4 p-5">
           <p className="text-sm text-muted-foreground">
             내 예약 목록과 지난 진료 기록은 다음 단계에서 준비돼요. (Story 4.1)
           </p>

@@ -7,6 +7,22 @@
 --    (안 하면 이후 앱의 일반 INSERT가 id=1부터 생성해 PK 충돌 — Story 1.3 환자 등록에서 터짐).
 --  * 재실행 가능하도록 먼저 TRUNCATE ... RESTART IDENTITY CASCADE.
 --  * 예약/진료기록/처방은 시드하지 않는다(후속 스토리가 UI로 생성).
+--
+-- ⚠️ 재시드 안전 가드 (Epic 1 회고 액션 #3 — 옵션 c "비어있을 때만 시드"):
+--   Story 2.1(예약)부터 UI로 만든 트랜잭션 데이터가 공유 DB에 쌓인다. 아래 가드는 이미
+--   환자/예약/진료기록이 있으면 시드를 통째로 중단해, 재실행이 그 데이터를 TRUNCATE 로 지우지
+--   못하게 막는다. (Supabase SQL 에디터/psql 은 스크립트를 한 트랜잭션으로 실행하므로 예외가
+--   나면 뒤의 TRUNCATE 가 커밋되지 않는다.)
+--   → 정말로 데모 DB를 처음부터 초기화하려면 이 do 블록만 임시로 주석 처리하고 실행하세요.
+do $$
+begin
+  if exists (select 1 from public.patient)
+     or exists (select 1 from public.appointment)
+     or exists (select 1 from public.medical_record) then
+    raise exception
+      '시드 중단: 이미 데이터가 있어요(환자/예약/진료기록). 재시드는 이 데이터를 지웁니다. 초기화가 목적이면 004_seed.sql 상단 가드 do 블록을 임시로 주석 처리하세요.';
+  end if;
+end $$;
 
 truncate table
   public.prescription,

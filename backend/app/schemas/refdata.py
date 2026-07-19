@@ -12,3 +12,16 @@ class DepartmentOut(BaseModel):
 
     id: int
     name: str
+
+
+class DoctorOut(BaseModel):
+    """의사(Story 2.1 예약 슬롯 피커용). id = doctor.id(정수),
+    hospital_department_id = 소속 진료과(FK, 예약이 이 값과 대조), department_name = 표시 필드.
+
+    연관은 FK 정수 id + 평평한 표시 필드로 싣는다(nested 금지, AD-10).
+    """
+
+    id: int
+    name: str
+    hospital_department_id: int
+    department_name: str
