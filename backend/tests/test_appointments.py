@@ -212,3 +212,53 @@ def test_create_appointment_missing_required_field_returns_422():
         },
     )
     assert resp.status_code == 422
+
+
+def test_create_appointment_unknown_patient_fk_maps_to_400(monkeypatch):
+    # 없는 patient_id → INSERT 시 FK 위반. 전역 500 대신 400 한국어로 매핑돼야 한다(리뷰 patch).
+    from psycopg.errors import ForeignKeyViolation
+
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+
+    def fk_insert(*args, **kwargs):
+        raise ForeignKeyViolation(
+            'insert or update on "appointment" violates foreign key constraint'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment", fk_insert)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 999999,
+            "hospital_department_id": 2,
+            "doctor_id": 3,
+            "reserved_at": "2026-07-20T10:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert isinstance(body["detail"], str)
+    assert "환자" in body["detail"]
+
+
+def test_create_appointment_none_row_maps_to_500(monkeypatch):
+    # db 가 None 행을 주면(도달 불가지만 타입상 가능) TypeError 대신 500 한국어 {detail} 로 방어.
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    monkeypatch.setattr(appointments_db, "insert_appointment", lambda *a, **k: None)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 3,
+            "reserved_at": "2026-07-20T10:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 500
+    assert isinstance(resp.json()["detail"], str)

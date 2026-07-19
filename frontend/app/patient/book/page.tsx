@@ -5,7 +5,7 @@
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1, AD-10). 저장은 비관적(서버 확정 후 반영).
 // ⚠️ 슬롯 충돌 검사·taken 셀·예약 목록 조회는 이 스토리 범위 밖 — 각각 Epic 5·Epic 4.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -79,14 +79,45 @@ function formatSeoulDayLabel(ymd: string): string {
   });
 }
 
+// 오늘(서울)부터 days일치의 선택지. 각 날의 정오 앵커에 24h 씩 더해 서울 tz 로 YYYY-MM-DD·라벨을 만든다.
+// 서울은 DST가 없어 24h 스텝이 항상 다음 날 같은 벽시계로 떨어진다. reserved_at 은 timestamptz 라
+// 어느 날짜든 그대로 저장된다(DB 변경 없음).
+function seoulDayOptions(now: Date, days = 7): { ymd: string; label: string }[] {
+  const todayNoon = new Date(`${seoulTodayYmd(now)}T12:00:00${HOSPITAL_UTC_OFFSET}`).getTime();
+  const out: { ymd: string; label: string }[] = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(todayNoon + i * 86_400_000);
+    const ymd = new Intl.DateTimeFormat("en-CA", {
+      timeZone: HOSPITAL_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+    out.push({ ymd, label: formatSeoulDayLabel(ymd) });
+  }
+  return out;
+}
+
 export default function BookAppointmentPage() {
   const router = useRouter();
   const { ready, patient } = usePatientIdentity();
 
-  // 데모: 서울 기준 오늘 하루의 30분 슬롯. 병원 시각이라 브라우저 타임존이 아니라 Asia/Seoul 로 고정.
-  const seoulYmd = useMemo(() => seoulTodayYmd(new Date()), []);
-  const slots = useMemo(() => slotsForSeoulDay(seoulYmd), [seoulYmd]);
-  const dayLabel = useMemo(() => formatSeoulDayLabel(seoulYmd), [seoulYmd]);
+  // 예약 가능 날짜: 서울 기준 오늘부터 7일. 선택한 날의 30분 슬롯을 만든다(병원 시각=Asia/Seoul 고정).
+  const dayOptions = useMemo(() => seoulDayOptions(new Date(), 7), []);
+  const [selectedYmd, setSelectedYmd] = useState<string>(() => dayOptions[0].ymd);
+  // 지난 시각 슬롯은 제거한다 — 오늘의 이미 지난 시간(15시에 09시 예약)·자정 넘긴 과거 날짜를 걸러
+  // 과거 예약을 막는다. 미래 날짜는 전부 남는다.
+  const slots = useMemo(() => {
+    // 마운트/날짜 변경 시점의 현재 시각 기준으로 지난 슬롯을 거른다. dayOptions 와 동일하게 new Date() 사용
+    // (Date.now() 는 react-hooks/purity 린트가 막는다).
+    const nowMs = new Date().getTime();
+    return slotsForSeoulDay(selectedYmd).filter((s) => new Date(s.iso).getTime() > nowMs);
+  }, [selectedYmd]);
+  const dayLabel = useMemo(() => formatSeoulDayLabel(selectedYmd), [selectedYmd]);
+  const dateItems = useMemo(
+    () => Object.fromEntries(dayOptions.map((d) => [d.ymd, d.label])),
+    [dayOptions],
+  );
 
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [deptLoadError, setDeptLoadError] = useState<string | null>(null);
@@ -103,6 +134,7 @@ export default function BookAppointmentPage() {
   const [slotErr, setSlotErr] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false); // 더블클릭 재진입 방지(disabled 리렌더 커밋 전 두 번째 클릭 방어).
   const [created, setCreated] = useState<Appointment | null>(null);
 
   // 신원 가드 — ready:false 는 "아직 못 읽음"이지 "신원 없음"이 아니다. 판정은 항상 ready && !patient.
@@ -179,6 +211,9 @@ export default function BookAppointmentPage() {
       ok = false;
     }
     if (!ok || !patient) return;
+    // 빠른 더블클릭이 disabled 리렌더 커밋 전에 두 번 들어오면 중복 예약이 생긴다 — ref 로 즉시 차단.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
 
     setSubmitting(true);
     try {
@@ -197,6 +232,7 @@ export default function BookAppointmentPage() {
       // request 가 오류를 한국어 메시지로 던진다(AD-10). 환자 톤이라 안심되게.
       toast.error(err instanceof Error ? err.message : "예약하지 못했어요. 다시 시도해 주세요.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -332,10 +368,38 @@ export default function BookAppointmentPage() {
             )}
           </div>
 
+          {/* 날짜 (필수) — 오늘부터 7일. 날짜를 바꾸면 그 날의 슬롯으로 갱신하고 시간 선택을 초기화한다. */}
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="date">
+              날짜 <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              items={dateItems}
+              value={selectedYmd}
+              onValueChange={(v) => {
+                setSelectedYmd(v as string);
+                setSelectedIso(null);
+                setSlotErr(null);
+              }}
+            >
+              <SelectTrigger id="date" className="w-full">
+                <SelectValue placeholder="날짜를 선택하세요" />
+              </SelectTrigger>
+              <SelectContent>
+                {dayOptions.map((d) => (
+                  <SelectItem key={d.ymd} value={d.ymd}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* 30분 슬롯 피커 (필수) */}
           <div className="flex flex-col gap-2">
             <div className="flex items-baseline justify-between gap-2">
-              <Label htmlFor="slot-picker">
+              {/* radiogroup 은 form control 이 아니라 htmlFor 대신 id + aria-labelledby 로 연결한다. */}
+              <Label id="slot-label">
                 시간 선택 (30분 단위) <span className="text-destructive">*</span>
               </Label>
               <span className="truncate text-xs text-muted-foreground">
@@ -343,14 +407,21 @@ export default function BookAppointmentPage() {
                 {doctorName ? ` · ${doctorName} 선생님` : ""}
               </span>
             </div>
-            <SlotPicker
-              slots={slots}
-              value={selectedIso}
-              onChange={(iso) => {
-                setSelectedIso(iso);
-                setSlotErr(null);
-              }}
-            />
+            {slots.length === 0 ? (
+              <p className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
+                이 날짜엔 예약 가능한 시간이 없어요. 다른 날짜를 골라 주세요.
+              </p>
+            ) : (
+              <SlotPicker
+                slots={slots}
+                value={selectedIso}
+                ariaLabelledBy="slot-label"
+                onChange={(iso) => {
+                  setSelectedIso(iso);
+                  setSlotErr(null);
+                }}
+              />
+            )}
             {slotErr && (
               <p role="alert" className="text-sm text-destructive">
                 {slotErr}

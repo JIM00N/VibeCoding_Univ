@@ -22,11 +22,14 @@ export function SlotPicker({
   value,
   onChange,
   ariaLabel = "예약 시간 선택 (30분 단위)",
+  ariaLabelledBy,
 }: {
   slots: Slot[];
   value: string | null;
   onChange: (iso: string) => void;
   ariaLabel?: string;
+  /** 있으면 aria-labelledby 로 보이는 라벨과 연결(우선). 없으면 aria-label 사용. */
+  ariaLabelledBy?: string;
 }) {
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -35,6 +38,7 @@ export function SlotPicker({
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
 
   function handleKeyDown(e: React.KeyboardEvent, index: number) {
+    if (slots.length === 0) return; // 빈 목록 방어(modulo-by-zero). 현재 배선상 미발생이나 재사용 대비.
     let next = index;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (index + 1) % slots.length;
     else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (index - 1 + slots.length) % slots.length;
@@ -45,7 +49,12 @@ export function SlotPicker({
   }
 
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+    <div
+      role="radiogroup"
+      aria-label={ariaLabelledBy ? undefined : ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      className="grid grid-cols-3 gap-2 sm:grid-cols-4"
+    >
       {slots.map((slot, i) => {
         const selected = slot.iso === value;
         return (
