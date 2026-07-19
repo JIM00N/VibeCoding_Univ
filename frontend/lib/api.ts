@@ -145,4 +145,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  /** 직원 예약 목록(FR-7). 전체 예약을 정규 모델 리스트로 받는다(직원 전체 접근).
+   *  환자용 스코핑 조회(?patient_id=)는 Epic 4 — 여기서 필터를 붙이지 않는다. */
+  getAppointments: async (): Promise<Appointment[]> => {
+    const data = await request<Appointment[]>("/appointments");
+    // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 예약 상태 전이(확정/취소, FR-7·FR-8). 성공 시 전이된 예약(정규 모델)을 돌려준다.
+   *  전이 규칙 위반·없는 예약은 request 가 4xx {detail} 한국어로 던진다(AD-10). */
+  updateAppointmentStatus: (
+    id: number,
+    status: AppointmentStatus,
+  ): Promise<Appointment> =>
+    request<Appointment>(`/appointments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 };

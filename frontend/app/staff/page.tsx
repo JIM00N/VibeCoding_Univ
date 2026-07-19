@@ -32,10 +32,14 @@ export default function StaffHome() {
               </p>
             </Card>
           </Link>
-          <Card className="p-5">
-            <h2 className="font-semibold">예약 관리</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Epic 2 에서 연결돼요.</p>
-          </Card>
+          <Link href="/staff/appointments" className="block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <Card className="p-5 transition-colors hover:bg-accent">
+              <h2 className="font-semibold">예약 관리</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                들어온 예약을 확정·취소하고 상태를 봐요.
+              </p>
+            </Card>
+          </Link>
         </div>
       </main>
     </>
