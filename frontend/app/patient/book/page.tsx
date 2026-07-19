@@ -79,14 +79,38 @@ function formatSeoulDayLabel(ymd: string): string {
   });
 }
 
+// 오늘(서울)부터 days일치의 선택지. 각 날의 정오 앵커에 24h 씩 더해 서울 tz 로 YYYY-MM-DD·라벨을 만든다.
+// 서울은 DST가 없어 24h 스텝이 항상 다음 날 같은 벽시계로 떨어진다. reserved_at 은 timestamptz 라
+// 어느 날짜든 그대로 저장된다(DB 변경 없음).
+function seoulDayOptions(now: Date, days = 7): { ymd: string; label: string }[] {
+  const todayNoon = new Date(`${seoulTodayYmd(now)}T12:00:00${HOSPITAL_UTC_OFFSET}`).getTime();
+  const out: { ymd: string; label: string }[] = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(todayNoon + i * 86_400_000);
+    const ymd = new Intl.DateTimeFormat("en-CA", {
+      timeZone: HOSPITAL_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+    out.push({ ymd, label: formatSeoulDayLabel(ymd) });
+  }
+  return out;
+}
+
 export default function BookAppointmentPage() {
   const router = useRouter();
   const { ready, patient } = usePatientIdentity();
 
-  // 데모: 서울 기준 오늘 하루의 30분 슬롯. 병원 시각이라 브라우저 타임존이 아니라 Asia/Seoul 로 고정.
-  const seoulYmd = useMemo(() => seoulTodayYmd(new Date()), []);
-  const slots = useMemo(() => slotsForSeoulDay(seoulYmd), [seoulYmd]);
-  const dayLabel = useMemo(() => formatSeoulDayLabel(seoulYmd), [seoulYmd]);
+  // 예약 가능 날짜: 서울 기준 오늘부터 7일. 선택한 날의 30분 슬롯을 만든다(병원 시각=Asia/Seoul 고정).
+  const dayOptions = useMemo(() => seoulDayOptions(new Date(), 7), []);
+  const [selectedYmd, setSelectedYmd] = useState<string>(() => dayOptions[0].ymd);
+  const slots = useMemo(() => slotsForSeoulDay(selectedYmd), [selectedYmd]);
+  const dayLabel = useMemo(() => formatSeoulDayLabel(selectedYmd), [selectedYmd]);
+  const dateItems = useMemo(
+    () => Object.fromEntries(dayOptions.map((d) => [d.ymd, d.label])),
+    [dayOptions],
+  );
 
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [deptLoadError, setDeptLoadError] = useState<string | null>(null);
@@ -330,6 +354,33 @@ export default function BookAppointmentPage() {
                 {doctorErr}
               </p>
             )}
+          </div>
+
+          {/* 날짜 (필수) — 오늘부터 7일. 날짜를 바꾸면 그 날의 슬롯으로 갱신하고 시간 선택을 초기화한다. */}
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="date">
+              날짜 <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              items={dateItems}
+              value={selectedYmd}
+              onValueChange={(v) => {
+                setSelectedYmd(v as string);
+                setSelectedIso(null);
+                setSlotErr(null);
+              }}
+            >
+              <SelectTrigger id="date" className="w-full">
+                <SelectValue placeholder="날짜를 선택하세요" />
+              </SelectTrigger>
+              <SelectContent>
+                {dayOptions.map((d) => (
+                  <SelectItem key={d.ymd} value={d.ymd}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* 30분 슬롯 피커 (필수) */}
