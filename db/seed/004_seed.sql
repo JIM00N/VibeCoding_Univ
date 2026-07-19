@@ -11,9 +11,14 @@
 -- ⚠️ 재시드 안전 가드 (Epic 1 회고 액션 #3 — 옵션 c "비어있을 때만 시드"):
 --   Story 2.1(예약)부터 UI로 만든 트랜잭션 데이터가 공유 DB에 쌓인다. 아래 가드는 이미
 --   환자/예약/진료기록이 있으면 시드를 통째로 중단해, 재실행이 그 데이터를 TRUNCATE 로 지우지
---   못하게 막는다. (Supabase SQL 에디터/psql 은 스크립트를 한 트랜잭션으로 실행하므로 예외가
---   나면 뒤의 TRUNCATE 가 커밋되지 않는다.)
---   → 정말로 데모 DB를 처음부터 초기화하려면 이 do 블록만 임시로 주석 처리하고 실행하세요.
+--   못하게 막는다.
+--   ⚠️ 반드시 명시적 트랜잭션(begin ... commit)으로 감싼다 — 안 그러면 `psql -f`(기본값:
+--   autocommit ON·ON_ERROR_STOP OFF)에서 raise exception 이 그 문장만 실패시키고 다음 TRUNCATE 가
+--   그대로 커밋돼 데이터가 지워진다. begin 안에서는 예외가 트랜잭션을 통째로 롤백해 TRUNCATE 가
+--   커밋되지 않는다. (Supabase SQL 에디터도 이 블록을 그대로 실행한다.)
+--   → 정말로 데모 DB를 처음부터 초기화하려면 아래 do 블록(가드)만 임시로 주석 처리하고 실행하세요.
+begin;
+
 do $$
 begin
   if exists (select 1 from public.patient)
@@ -81,3 +86,6 @@ select setval(pg_get_serial_sequence('public.hospital_department', 'id'), (selec
 select setval(pg_get_serial_sequence('public.doctor', 'id'),              (select max(id) from public.doctor));
 select setval(pg_get_serial_sequence('public.drug', 'id'),                (select max(id) from public.drug));
 select setval(pg_get_serial_sequence('public.patient', 'id'),             (select max(id) from public.patient));
+
+-- 가드~시드를 한 트랜잭션으로 확정. 위 가드가 raise 하면 여기 도달 못 하고 전체 롤백된다.
+commit;

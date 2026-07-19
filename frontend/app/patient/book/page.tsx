@@ -25,17 +25,33 @@ import {
 import { api, type Appointment, type Department, type Doctor } from "@/lib/api";
 import { usePatientIdentity } from "@/lib/patient-identity";
 
-// 하루치 30분 슬롯을 만든다. 로컬 시각으로 분 ∈ {0,30}·초 0 으로 맞춘 뒤 toISOString()(UTC Z).
-// KST 는 정시(UTC+9) 오프셋이라 분·초가 UTC 변환에도 불변 → 백엔드 reserved_at CHECK 통과(AD-3).
-function slotsForDay(day: Date, startHour = 9, endHour = 18): Slot[] {
+// 병원 시각은 항상 서울 기준이다. 브라우저 로컬 타임존을 쓰면(예: UTC 브라우저) 화면에 보이는
+// "10:30"이 그 브라우저 시각으로 해석돼 실제로는 서울 19:30에 예약된다. 그래서 슬롯 인스턴트
+// 생성·표시를 모두 Asia/Seoul 로 고정한다. 서울은 DST가 없어 항상 UTC+9 라 오프셋을 그대로 박아도 안전.
+const HOSPITAL_TZ = "Asia/Seoul";
+const HOSPITAL_UTC_OFFSET = "+09:00";
+
+// 브라우저 타임존과 무관하게 "서울 기준 오늘"의 YYYY-MM-DD 를 얻는다(en-CA = ISO 형식).
+function seoulTodayYmd(now: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: HOSPITAL_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+// 서울 벽시계 시각(h:m)을 +09:00 고정 오프셋으로 만들어 브라우저 무관하게 정확한 UTC 인스턴트를 얻는다.
+// 분 ∈ {0,30}·초 0 이라 백엔드 to_slot()·reserved_at CHECK 를 그대로 통과한다(AD-3).
+function slotsForSeoulDay(ymd: string, startHour = 9, endHour = 18): Slot[] {
   const out: Slot[] = [];
   for (let h = startHour; h < endHour; h++) {
     for (const m of [0, 30]) {
-      const d = new Date(day);
-      d.setHours(h, m, 0, 0);
+      const hh = String(h).padStart(2, "0");
+      const mm = String(m).padStart(2, "0");
       out.push({
-        label: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
-        iso: d.toISOString(),
+        label: `${hh}:${mm}`,
+        iso: new Date(`${ymd}T${hh}:${mm}:00${HOSPITAL_UTC_OFFSET}`).toISOString(),
       });
     }
   }
@@ -44,6 +60,7 @@ function slotsForDay(day: Date, startHour = 9, endHour = 18): Slot[] {
 
 function formatReservedAt(iso: string): string {
   return new Date(iso).toLocaleString("ko-KR", {
+    timeZone: HOSPITAL_TZ,
     month: "long",
     day: "numeric",
     weekday: "short",
@@ -52,14 +69,24 @@ function formatReservedAt(iso: string): string {
   });
 }
 
+function formatSeoulDayLabel(ymd: string): string {
+  // 정오 앵커를 서울 tz 로 포맷 → 날짜·요일이 브라우저 무관하게 서울 기준으로 나온다.
+  return new Date(`${ymd}T12:00:00${HOSPITAL_UTC_OFFSET}`).toLocaleDateString("ko-KR", {
+    timeZone: HOSPITAL_TZ,
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+}
+
 export default function BookAppointmentPage() {
   const router = useRouter();
   const { ready, patient } = usePatientIdentity();
 
-  // 데모: 오늘 하루의 30분 슬롯. new Date() 는 클라이언트에서만 도는 슬롯 분기에서만 쓰인다.
-  const day = useMemo(() => new Date(), []);
-  const slots = useMemo(() => slotsForDay(day), [day]);
-  const dayLabel = day.toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
+  // 데모: 서울 기준 오늘 하루의 30분 슬롯. 병원 시각이라 브라우저 타임존이 아니라 Asia/Seoul 로 고정.
+  const seoulYmd = useMemo(() => seoulTodayYmd(new Date()), []);
+  const slots = useMemo(() => slotsForSeoulDay(seoulYmd), [seoulYmd]);
+  const dayLabel = useMemo(() => formatSeoulDayLabel(seoulYmd), [seoulYmd]);
 
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [deptLoadError, setDeptLoadError] = useState<string | null>(null);
