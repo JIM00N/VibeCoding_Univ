@@ -53,8 +53,12 @@ def insert_appointment(
     hospital_department_id: int,
     doctor_id: int | None,
     reserved_at: datetime,
-) -> dict[str, Any]:
-    """예약 1건을 삽입하고 표시 필드까지 조인한 행(dict)을 반환한다. 파라미터화 SQL(injection 방지)."""
+) -> dict[str, Any] | None:
+    """예약 1건을 삽입하고 표시 필드까지 조인한 행(dict)을 반환한다. 파라미터화 SQL(injection 방지).
+
+    FK 가 유효하면 조인 결과가 항상 1행이라 dict 를 돌려주지만, fetchone() 계약상 None 가능성을
+    정직하게 반영한다(호출 서비스가 None 을 방어). FK 위반은 여기서 psycopg 예외로 올라간다.
+    """
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(

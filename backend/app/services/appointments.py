@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
+from psycopg.errors import ForeignKeyViolation
 
 from app.db import appointments as appointments_db
 from app.schemas.appointments import AppointmentCreate, AppointmentOut
@@ -36,12 +37,26 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
             detail="선택한 진료과의 담당 의사가 아니에요. 의사를 다시 선택해 주세요.",
         )
 
-    row = appointments_db.insert_appointment(
-        payload.patient_id,
-        payload.hospital_department_id,
-        payload.doctor_id,
-        slot,
-    )
+    try:
+        row = appointments_db.insert_appointment(
+            payload.patient_id,
+            payload.hospital_department_id,
+            payload.doctor_id,
+            slot,
+        )
+    except ForeignKeyViolation as exc:
+        # 의사·진료과는 위에서 검증했으므로 남은 FK 위반은 사실상 존재하지 않는 patient_id
+        # (오래된 localStorage 신원·재시드 후 id 이동 등). 전역 500 대신 친절한 400 한국어로(AD-10).
+        raise HTTPException(
+            status_code=400,
+            detail="선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요.",
+        ) from exc
+    if row is None:
+        # FK 가 유효하면 조인 결과가 항상 1행이라 도달 불가 — 타입 정직·방어적 가드.
+        raise HTTPException(
+            status_code=500,
+            detail="예약 생성 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        )
     return _to_appointment_out(row)
 
 

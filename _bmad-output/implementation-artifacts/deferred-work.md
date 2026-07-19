@@ -31,3 +31,11 @@
 - **인프라 오류 → 한국어 {detail} 전역 핸들러** — DB 다운/풀 타임아웃 시 FastAPI 기본 500(영문)이 나가고 클라이언트가 한국어 폴백을 보여준다. AD-10 계약을 인프라 오류까지 확장하는 전역 예외 핸들러는 배포 하드닝(Story 1.2)에서. [backend/app/routers, backend/app/db/pool.py]
 - **fetch_departments hospital 필터** — 진료과 조회 SQL에 `where hd.hospital_id = ...`가 없어 다병원이 시드되면 진료과가 섞인다. 단일 병원 전제에선 정확. 다병원 도입 전 필터 추가. [backend/app/db/refdata.py]
 - **RLS 비소유자 역할 시 빈 결과** — deny-by-default라 백엔드가 소유자(postgres) 역할이 아니면 조용히 `[]`를 반환한다. 현재 세션 풀러 소유자 역할로 실증됨. 향후 최소권한 역할로 바꾸면 명시적 정책/GRANT 필요. [db/migrations/001_rls.sql]
+
+## Deferred from: code review of 2-1-환자-예약-생성 (2026-07-19)
+
+- **진료과 0건 빈 상태 안내 없음** — 진료과 조회가 성공적으로 `[]`를 주면 안내 없이 빈 Select만 뜨고 제출이 영구 차단된다(에러 경로는 `deptLoadError` 표시). 시드에 3과가 있어 데모에선 미발생. 향후 빈 상태 UI 추가. [frontend/app/patient/book/page.tsx]
+- **진료과에 의사 0명 안내 없음** — `getDoctors`가 `[]`면 의사 Select가 활성이지만 옵션·안내가 없다. 시드는 과당 2명이라 데모 미발생. "이 진료과에 담당 의사가 없어요" 안내 추가. [frontend/app/patient/book/page.tsx]
+- **의사 로드 실패가 toast-only** — `getDoctors` 실패 시 `setDoctors([])` + 일시 toast뿐, 진료과처럼 지속 인라인 오류가 없다. 놓치면 빈 드롭다운만 남음. departments처럼 inline error+재시도 추가. [frontend/app/patient/book/page.tsx:157]
+- **자정 넘긴 stale dayOptions** — 7일 날짜 목록이 마운트 1회 계산이라, 페이지를 자정 넘겨 열어두면 첫 옵션이 어제를 가리킨다. 타이머/포커스 재계산 필요. [frontend/app/patient/book/page.tsx:106]
+- **`to_slot`(UTC) vs CHECK(세션 tz `extract`) 불일치** — 비-정시 오프셋 세션 tz(+5:45 등)에선 유효 슬롯이 CHECK에 걸려 500. Supabase 기본 UTC라 무해, `slots.py`·AD-3에 문서화됨. 배포 tz 변경 시 재검토. [backend/app/slots.py, db/migrations/003_reserved_at_check.sql]
