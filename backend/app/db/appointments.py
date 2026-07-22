@@ -39,6 +39,61 @@ _INSERT_APPOINTMENT = """
 """
 
 
+# 직원 예약 목록(Story 2.2, FR-7). 2.1 _INSERT_APPOINTMENT 하단 조인과 같은 모양 → 같은 AppointmentOut
+# shape 보장. doctor 는 LEFT JOIN(nullable 정직). 정렬 id desc = 방금 들어온 예약이 위(직원 확정 대상).
+# 직원 전체 접근이라 patient_id 스코핑 없음(환자용 조회는 Epic 4).
+_SELECT_APPOINTMENTS = """
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from public.appointment a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+    order by a.id desc
+"""
+
+# 예약 단건 조회(상태 전이 전 현재 status·존재 확인용). 없으면 fetchone() 이 None → 서비스가 404.
+_SELECT_APPOINTMENT_BY_ID = """
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from public.appointment a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+    where a.id = %s
+"""
+
+# 상태 전이(확정/취소) — UPDATE 후 표시 필드를 조인해 한 왕복으로 정규 모델을 돌려준다.
+# 전이 적격성(대기→확정 등)은 서비스가 먼저 검증(AD-5). 추가로 UPDATE 자체가 `status = any(%s)`
+# (허용 출발 status)를 조건으로 걸어 compare-and-set 한다 — 서비스 검증과 UPDATE 사이에 다른 요청이
+# status 를 바꾸는 경합에서도 금지 전이(예: 취소→확정)가 성립하지 않는다. 조건 불일치는 0행 → None.
+# ⚠️ 슬롯 점유/해제(check_and_occupy)는 Epic 5. 취소는 status 만 바꾼다(충돌 쿼리가 취소를 제외).
+_UPDATE_APPOINTMENT_STATUS = """
+    with updated as (
+        update public.appointment
+        set status = %s
+        where id = %s
+          and status = any(%s)
+        returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
+    )
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from updated a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+"""
+
+
 def fetch_doctor_department(doctor_id: int) -> int | None:
     """의사의 소속 진료과 id 를 반환한다. 의사가 없으면 None."""
     with get_pool().connection() as conn:
@@ -64,5 +119,40 @@ def insert_appointment(
             cur.execute(
                 _INSERT_APPOINTMENT,
                 (patient_id, hospital_department_id, doctor_id, reserved_at),
+            )
+            return cur.fetchone()
+
+
+def fetch_appointments() -> list[dict[str, Any]]:
+    """전체 예약 목록(dict 리스트)을 반환한다 — 직원 전체 접근(FR-7). 최신순(id desc)."""
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_APPOINTMENTS)
+            return cur.fetchall()
+
+
+def fetch_appointment(appointment_id: int) -> dict[str, Any] | None:
+    """예약 1건(표시 필드 포함)을 반환한다. 없으면 None(서비스가 404 로 매핑)."""
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_APPOINTMENT_BY_ID, (appointment_id,))
+            return cur.fetchone()
+
+
+def update_appointment_status(
+    appointment_id: int, new_status: str, allowed_sources: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """예약 status 를 조건부(compare-and-set)로 갱신하고 표시 필드까지 조인한 행(dict)을 반환한다.
+
+    현재 status 가 allowed_sources 안에 있을 때만 UPDATE 한다 — 서비스가 먼저 전이 적격성을
+    검증하지만(AD-5), 검증과 UPDATE 사이에 다른 요청이 status 를 바꾸는 경합에서도 이 원자적 가드가
+    금지 전이를 막는다. 조건 불일치(경합)·없는 id 는 0행 → None(서비스가 409 로 매핑).
+    파라미터화 SQL(injection 방지) — allowed_sources 는 text[] 배열 파라미터로 바인딩된다.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                _UPDATE_APPOINTMENT_STATUS,
+                (new_status, appointment_id, list(allowed_sources)),
             )
             return cur.fetchone()

@@ -262,3 +262,213 @@ def test_create_appointment_none_row_maps_to_500(monkeypatch):
 
     assert resp.status_code == 500
     assert isinstance(resp.json()["detail"], str)
+
+
+# --- Story 2.2: GET /appointments (직원 목록) ---------------------------------
+
+
+def test_list_appointments_returns_flat_canonical_list(monkeypatch):
+    # AC1/AC3/AC4: 직원 전체 목록 → AppointmentOut flat 리스트. db 순서를 그대로 보존한다.
+    rows = [
+        _fake_row(id=11, status="대기"),
+        _fake_row(id=10, status="확정", doctor_id=4, doctor_name="박서연"),
+    ]
+    monkeypatch.setattr(appointments_db, "fetch_appointments", lambda: rows)
+
+    client = TestClient(app)
+    resp = client.get("/appointments")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert [item["id"] for item in data] == [11, 10]
+    # AD-10: 각 항목이 flat 정규 모델 — FK 정수 id + 평평한 표시 필드. nested 금지.
+    assert set(data[0].keys()) == {
+        "id",
+        "patient_id",
+        "hospital_department_id",
+        "doctor_id",
+        "reserved_at",
+        "status",
+        "patient_name",
+        "doctor_name",
+        "department_name",
+    }
+    assert data[1]["status"] == "확정"
+    assert data[1]["doctor_name"] == "박서연"
+
+
+def test_list_appointments_empty_returns_200_empty_list(monkeypatch):
+    monkeypatch.setattr(appointments_db, "fetch_appointments", lambda: [])
+
+    client = TestClient(app)
+    resp = client.get("/appointments")
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# --- Story 2.2: PATCH /appointments/{id} (상태 전이 확정/취소) ------------------
+
+
+def test_confirm_pending_appointment_transitions_to_confirmed(monkeypatch):
+    # AC1: 대기 → 확정. fetch 로 현재 상태 확인 후 update 로 전이, 전이된 정규 모델 반환.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    captured: dict = {}
+
+    def fake_update(appointment_id, new_status, allowed_sources):
+        captured["args"] = (appointment_id, new_status)
+        captured["allowed"] = allowed_sources
+        return _fake_row(id=appointment_id, status=new_status)
+
+    monkeypatch.setattr(appointments_db, "update_appointment_status", fake_update)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정"})
+
+    assert resp.status_code == 200
+    assert captured["args"] == (10, "확정")
+    # compare-and-set: 확정은 대기에서만 허용 → UPDATE 에 그 출발 status 만 전달된다.
+    assert "대기" in captured["allowed"]
+    data = resp.json()
+    assert data["status"] == "확정"
+    assert data["id"] == 10
+
+
+def test_cancel_confirmed_appointment_transitions_to_cancelled(monkeypatch):
+    # AC2: 확정 → 취소(대기/확정에서 취소 가능).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="확정")
+    )
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_status",
+        lambda aid, s, srcs: _fake_row(id=aid, status=s),
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "취소"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "취소"
+
+
+def test_cancel_pending_appointment_transitions_to_cancelled(monkeypatch):
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_status",
+        lambda aid, s, srcs: _fake_row(id=aid, status=s),
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "취소"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "취소"
+
+
+def test_patch_status_race_returns_409(monkeypatch):
+    # 경합: fetch 시점엔 대기라 서비스 검증을 통과하지만, compare-and-set UPDATE 가 0행(None)을
+    # 준다(그 사이 다른 요청이 status 를 바꿈) → 409 한국어. 금지 전이가 성립하지 않는다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(
+        appointments_db, "update_appointment_status", lambda aid, s, srcs: None
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정"})
+
+    assert resp.status_code == 409
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_confirm_already_confirmed_rejected(monkeypatch):
+    # AC1: 확정 상태를 다시 확정 → 400. update 는 호출되면 안 된다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="확정")
+    )
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정"})
+
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_confirm_completed_rejected(monkeypatch):
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="완료")
+    )
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정"})
+
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_cancel_completed_rejected(monkeypatch):
+    # AC2: 완료된 예약은 취소 불가 → 400. update 호출 금지.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="완료")
+    )
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "취소"})
+
+    assert resp.status_code == 400
+    assert "완료" in resp.json()["detail"]
+
+
+def test_cancel_already_cancelled_rejected(monkeypatch):
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="취소")
+    )
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "취소"})
+
+    assert resp.status_code == 400
+    assert "취소" in resp.json()["detail"]
+
+
+def test_patch_disallowed_target_status_rejected(monkeypatch):
+    # 완료 등 확정/취소 외 목표값 → 400. fetch·update 둘 다 호출되면 안 된다(화이트리스트가 먼저 막음).
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "완료"})
+
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_patch_unknown_appointment_returns_404(monkeypatch):
+    # 없는 예약 → fetch_appointment 가 None → 404. update 호출 금지.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: None)
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/999", json={"status": "확정"})
+
+    assert resp.status_code == 404
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_patch_missing_status_returns_422():
+    # status 누락 → Pydantic 필수 검증(422). 프런트는 버튼으로만 확정/취소를 보낸다.
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={})
+    assert resp.status_code == 422

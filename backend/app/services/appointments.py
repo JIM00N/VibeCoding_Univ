@@ -5,8 +5,23 @@ from fastapi import HTTPException
 from psycopg.errors import ForeignKeyViolation
 
 from app.db import appointments as appointments_db
-from app.schemas.appointments import AppointmentCreate, AppointmentOut
+from app.schemas.appointments import (
+    AppointmentCreate,
+    AppointmentOut,
+    AppointmentStatusUpdate,
+)
 from app.slots import to_slot
+
+# 클라이언트가 정할 수 있는 목표 status — 확정/취소만. '완료'는 Epic 3 진료기록의 tx 부작용이라
+# 여기서 허용하지 않는다(AD-5). '대기'로 되돌리기도 없음.
+_CLIENT_SETTABLE_STATUS = ("확정", "취소")
+
+# 목표 status 별 허용 출발 status(전이 적격성, AD-5 — 예약 서비스만 status 를 소유한다).
+#   확정: 대기에서만  /  취소: 대기·확정에서만.
+_ALLOWED_SOURCE = {
+    "확정": ("대기",),
+    "취소": ("대기", "확정"),
+}
 
 
 def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
@@ -58,6 +73,66 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
             detail="예약 생성 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
         )
     return _to_appointment_out(row)
+
+
+def list_appointments() -> list[AppointmentOut]:
+    """전체 예약 목록을 정규 응답 모델로 돌려준다(FR-7, 직원 전체 접근).
+
+    patient_id 스코핑(AD-8)은 환자용 조회 규약이라 여기 해당 없음 — 직원은 전체를 본다(Epic 4는 별개).
+    """
+    rows = appointments_db.fetch_appointments()
+    return [_to_appointment_out(row) for row in rows]
+
+
+def set_appointment_status(
+    appointment_id: int, payload: AppointmentStatusUpdate
+) -> AppointmentOut:
+    """예약 status 전이(확정/취소). 예약 서비스만 status 를 소유한다(AD-5).
+
+    - 목표값은 확정/취소만(그 외 400). 완료는 클라이언트가 못 정함(Epic 3 tx 부작용).
+    - 전이 적격성: 확정은 대기에서만, 취소는 대기/확정에서만. 위반 시 400 한국어.
+    - 없는 예약은 404. 거부·검증 위반은 4xx + 문자열 {detail}(lib/api.ts 가 그대로 표시, AD-10).
+
+    ⚠️ 슬롯 점유/해제(check_and_occupy)는 Epic 5. 취소는 status 전이만 — Epic 5 충돌 쿼리가
+    취소를 제외하므로 슬롯 해제가 자연히 성립한다. 의사 변경(재배정)은 Story 2.3.
+    """
+    target = payload.status
+    if target not in _CLIENT_SETTABLE_STATUS:
+        raise HTTPException(status_code=400, detail="확정 또는 취소만 가능해요.")
+
+    current = appointments_db.fetch_appointment(appointment_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+
+    if current["status"] not in _ALLOWED_SOURCE[target]:
+        raise HTTPException(
+            status_code=400,
+            detail=_reject_message(current["status"], target),
+        )
+
+    row = appointments_db.update_appointment_status(
+        appointment_id, target, _ALLOWED_SOURCE[target]
+    )
+    if row is None:
+        # 위에서 존재·적격을 확인했으나 UPDATE 시점에 status 가 바뀐 경합(동시 확정/취소 등).
+        # compare-and-set 가드가 금지 전이를 막았다 — 새로고침 후 재확인을 안내한다(409 Conflict).
+        raise HTTPException(
+            status_code=409,
+            detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",
+        )
+    return _to_appointment_out(row)
+
+
+def _reject_message(current_status: str, target: str) -> str:
+    """전이 거부 사유를 사람이 읽는 한국어로 안내한다(UX-DR10 — 정직·실행 가능)."""
+    if target == "확정":
+        return "대기 상태 예약만 확정할 수 있어요."
+    # target == "취소"
+    if current_status == "취소":
+        return "이미 취소된 예약이에요."
+    if current_status == "완료":
+        return "이미 완료된 예약이라 취소할 수 없어요."
+    return "이 예약은 취소할 수 없어요."
 
 
 def _to_appointment_out(row: dict) -> AppointmentOut:

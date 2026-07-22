@@ -20,6 +20,17 @@ class AppointmentCreate(BaseModel):
     reserved_at: datetime
 
 
+class AppointmentStatusUpdate(BaseModel):
+    """예약 상태 전이 요청(FR-7, FR-8). 확정 또는 취소.
+
+    status 를 Literal 이 아니라 str 로 받는다 — 잘못된 값이 Pydantic 422(리스트 detail)면
+    lib/api.ts 가 일반 메시지로 바꾼다. 서비스가 400 문자열 한국어로 막아 친절 문구를 띄운다(AD-10).
+    '완료'는 여기로 못 온다(Epic 3 진료기록의 tx 부작용, AD-5). 의사 변경(재배정)은 Story 2.3.
+    """
+
+    status: str
+
+
 class AppointmentOut(BaseModel):
     """예약 정규 응답. 정수 FK id + 평평한 표시 필드(nested 금지, AD-10).
 

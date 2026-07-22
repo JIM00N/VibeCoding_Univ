@@ -39,3 +39,7 @@
 - **의사 로드 실패가 toast-only** — `getDoctors` 실패 시 `setDoctors([])` + 일시 toast뿐, 진료과처럼 지속 인라인 오류가 없다. 놓치면 빈 드롭다운만 남음. departments처럼 inline error+재시도 추가. [frontend/app/patient/book/page.tsx:157]
 - **자정 넘긴 stale dayOptions** — 7일 날짜 목록이 마운트 1회 계산이라, 페이지를 자정 넘겨 열어두면 첫 옵션이 어제를 가리킨다. 타이머/포커스 재계산 필요. [frontend/app/patient/book/page.tsx:106]
 - **`to_slot`(UTC) vs CHECK(세션 tz `extract`) 불일치** — 비-정시 오프셋 세션 tz(+5:45 등)에선 유효 슬롯이 CHECK에 걸려 500. Supabase 기본 UTC라 무해, `slots.py`·AD-3에 문서화됨. 배포 tz 변경 시 재검토. [backend/app/slots.py, db/migrations/003_reserved_at_check.sql]
+
+## Deferred from: code review of 2-2-직원-예약-확정-취소-상태-흐름 (2026-07-22)
+
+- **`formatReservedAt` 중복(2-소스)** — 2.2가 공유 헬퍼 `frontend/lib/format.ts`를 새로 만들었으나 2.1의 로컬 복사본 `frontend/app/patient/book/page.tsx:61`을 import로 이관하지 않았다. 두 정의는 바이트 동일(같은 옵션·`Asia/Seoul`)이라 출력 정합 문제는 없고, 스펙 Project Structure Notes가 "미러"를 명시 허용한다. 정리하려면 book 화면이 `@/lib/format`을 import하도록 교체하면 되나 2.1 파일을 손대므로 add-only 규율상 보류. 향후 book 화면을 만질 때 함께 이관. [frontend/lib/format.ts:6 ↔ frontend/app/patient/book/page.tsx:61]
