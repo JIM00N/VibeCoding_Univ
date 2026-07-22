@@ -5,7 +5,7 @@
 // 반응형(UX-DR11): ≥md 밀도 있는 표, 모바일은 카드. 저장은 비관적(서버 확정 후 반영).
 // 취소는 파괴적 액션이라 확인 Dialog 1단계(UX-DR6). 슬롯 충돌/점유는 Epic 5 — 여기선 status 만 바꾼다.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { toast } from "sonner";
 
@@ -51,6 +51,8 @@ export default function StaffAppointmentsPage() {
   const [pendingId, setPendingId] = useState<number | null>(null);
   // 취소 확인 Dialog 대상 예약(null = 닫힘).
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+  // 동기 재진입 가드 — pendingId(state)는 같은 tick 연타 사이에 아직 갱신 전이라, ref 로 즉시 막는다(2.1 패턴).
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     // setLoading 을 타이머 콜백 안에서 호출한다 — effect 본문의 동기 setState 는 React 19 린트가 막는다(1.4 패턴).
@@ -80,17 +82,21 @@ export default function StaffAppointmentsPage() {
 
   // 확정/취소 공통 전이 처리 — 비관적(서버 확정 후 반영). 성공 시 PATCH 응답 행으로 그 항목만 교체.
   async function runStatusChange(appt: Appointment, status: AppointmentStatus) {
-    if (pendingId !== null) return; // 재진입 가드(더블클릭·연타 차단)
+    if (submittingRef.current) return; // 동기 재진입 가드(같은 tick 더블클릭·연타 차단)
+    submittingRef.current = true;
     setPendingId(appt.id);
     try {
       const updated = await api.updateAppointmentStatus(appt.id, status);
       setAppointments((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       toast.success(status === "확정" ? "예약을 확정했어요." : "예약을 취소했어요.");
     } catch (err) {
-      // 전이 규칙 위반·없는 예약 등은 request 가 4xx 한국어로 던진다(AD-10). 원래 상태 유지.
+      // 전이 규칙 위반·경합(409)·없는 예약 등은 request 가 4xx 한국어로 던진다(AD-10).
       const message = err instanceof Error ? err.message : "요청을 처리하지 못했어요.";
       toast.error(message);
+      // 실패는 이 화면이 stale 일 수 있다는 신호(다른 직원이 이미 바꿈 등) — 서버 진실로 재동기화한다.
+      setReloadNonce((n) => n + 1);
     } finally {
+      submittingRef.current = false;
       setPendingId(null);
     }
   }
@@ -226,7 +232,9 @@ export default function StaffAppointmentsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>닫기</AlertDialogCancel>
-            <AlertDialogAction onClick={handleCancelConfirmed}>예약 취소</AlertDialogAction>
+            <AlertDialogAction onClick={handleCancelConfirmed} disabled={busy}>
+              예약 취소
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -318,8 +318,9 @@ def test_confirm_pending_appointment_transitions_to_confirmed(monkeypatch):
     )
     captured: dict = {}
 
-    def fake_update(appointment_id, new_status):
+    def fake_update(appointment_id, new_status, allowed_sources):
         captured["args"] = (appointment_id, new_status)
+        captured["allowed"] = allowed_sources
         return _fake_row(id=appointment_id, status=new_status)
 
     monkeypatch.setattr(appointments_db, "update_appointment_status", fake_update)
@@ -329,6 +330,8 @@ def test_confirm_pending_appointment_transitions_to_confirmed(monkeypatch):
 
     assert resp.status_code == 200
     assert captured["args"] == (10, "확정")
+    # compare-and-set: 확정은 대기에서만 허용 → UPDATE 에 그 출발 status 만 전달된다.
+    assert "대기" in captured["allowed"]
     data = resp.json()
     assert data["status"] == "확정"
     assert data["id"] == 10
@@ -342,7 +345,7 @@ def test_cancel_confirmed_appointment_transitions_to_cancelled(monkeypatch):
     monkeypatch.setattr(
         appointments_db,
         "update_appointment_status",
-        lambda aid, s: _fake_row(id=aid, status=s),
+        lambda aid, s, srcs: _fake_row(id=aid, status=s),
     )
 
     client = TestClient(app)
@@ -359,7 +362,7 @@ def test_cancel_pending_appointment_transitions_to_cancelled(monkeypatch):
     monkeypatch.setattr(
         appointments_db,
         "update_appointment_status",
-        lambda aid, s: _fake_row(id=aid, status=s),
+        lambda aid, s, srcs: _fake_row(id=aid, status=s),
     )
 
     client = TestClient(app)
@@ -367,6 +370,23 @@ def test_cancel_pending_appointment_transitions_to_cancelled(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "취소"
+
+
+def test_patch_status_race_returns_409(monkeypatch):
+    # 경합: fetch 시점엔 대기라 서비스 검증을 통과하지만, compare-and-set UPDATE 가 0행(None)을
+    # 준다(그 사이 다른 요청이 status 를 바꿈) → 409 한국어. 금지 전이가 성립하지 않는다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(
+        appointments_db, "update_appointment_status", lambda aid, s, srcs: None
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정"})
+
+    assert resp.status_code == 409
+    assert isinstance(resp.json()["detail"], str)
 
 
 def test_confirm_already_confirmed_rejected(monkeypatch):

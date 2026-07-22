@@ -110,12 +110,15 @@ def set_appointment_status(
             detail=_reject_message(current["status"], target),
         )
 
-    row = appointments_db.update_appointment_status(appointment_id, target)
+    row = appointments_db.update_appointment_status(
+        appointment_id, target, _ALLOWED_SOURCE[target]
+    )
     if row is None:
-        # 바로 위에서 존재를 확인했으므로 도달 불가 — 타입 정직·방어적 가드(2.1 패턴).
+        # 위에서 존재·적격을 확인했으나 UPDATE 시점에 status 가 바뀐 경합(동시 확정/취소 등).
+        # compare-and-set 가드가 금지 전이를 막았다 — 새로고침 후 재확인을 안내한다(409 Conflict).
         raise HTTPException(
-            status_code=500,
-            detail="예약 상태를 변경하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            status_code=409,
+            detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",
         )
     return _to_appointment_out(row)
 
