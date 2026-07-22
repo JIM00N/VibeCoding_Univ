@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
+import { CategoryBadge } from "@/components/category-badge";
 import { RoleContextBar } from "@/components/role-context-bar";
 import {
   AlertDialog,
@@ -33,11 +34,25 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, type Appointment, type AppointmentStatus } from "@/lib/api";
+import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
 import { formatReservedAt } from "@/lib/format";
 
-// nullable 표시 필드는 비어 있으면 —(2.1 스키마상 doctor_name 은 nullable, P0는 항상 채워짐).
-function orDash(value: string | null): string {
-  return value && value.trim() ? value : "—";
+// 진료과: 진료과별 색 배지(항상 존재). 색은 hospital_department_id 로 결정적 매핑(category-color).
+function renderDepartment(appt: Appointment) {
+  return (
+    <CategoryBadge
+      name={appt.department_name}
+      colorClass={departmentColorClass(appt.hospital_department_id)}
+    />
+  );
+}
+
+// 담당 의사: 이름이 있으면 의사별 색 배지, 없으면 —(doctor_name 은 nullable, P0는 항상 채워짐).
+function renderDoctor(appt: Appointment) {
+  if (!appt.doctor_name || !appt.doctor_name.trim()) return "—";
+  return (
+    <CategoryBadge name={appt.doctor_name} colorClass={doctorColorClass(appt.doctor_id ?? 0)} />
+  );
 }
 
 export default function StaffAppointmentsPage() {
@@ -171,8 +186,8 @@ export default function StaffAppointmentsPage() {
                     {appointments.map((a) => (
                       <TableRow key={a.id}>
                         <TableCell className="font-medium">{a.patient_name}</TableCell>
-                        <TableCell>{a.department_name}</TableCell>
-                        <TableCell>{orDash(a.doctor_name)}</TableCell>
+                        <TableCell>{renderDepartment(a)}</TableCell>
+                        <TableCell>{renderDoctor(a)}</TableCell>
                         <TableCell>{formatReservedAt(a.reserved_at)}</TableCell>
                         <TableCell>
                           <AppointmentStatusBadge status={a.status} />
@@ -196,9 +211,9 @@ export default function StaffAppointmentsPage() {
                     </div>
                     <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
                       <dt className="text-muted-foreground">진료과</dt>
-                      <dd>{a.department_name}</dd>
+                      <dd>{renderDepartment(a)}</dd>
                       <dt className="text-muted-foreground">담당 의사</dt>
-                      <dd>{orDash(a.doctor_name)}</dd>
+                      <dd>{renderDoctor(a)}</dd>
                       <dt className="text-muted-foreground">예약 시각</dt>
                       <dd>{formatReservedAt(a.reserved_at)}</dd>
                     </dl>
