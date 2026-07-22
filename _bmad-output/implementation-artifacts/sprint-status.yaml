@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-19
+last_updated: 2026-07-22
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -60,7 +60,7 @@ development_status:
   # Epic 2: 예약 (환자가 잡고, 직원이 관리)
   epic-2: in-progress
   2-1-환자-예약-생성: done
-  2-2-직원-예약-확정-취소-상태-흐름: review
+  2-2-직원-예약-확정-취소-상태-흐름: done
   2-3-직원-담당-의사-변경-재배정: backlog
   epic-2-retrospective: optional
 
