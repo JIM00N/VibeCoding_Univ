@@ -62,7 +62,7 @@ development_status:
   2-1-환자-예약-생성: done
   2-2-직원-예약-확정-취소-상태-흐름: done
   2-3-직원-담당-의사-변경-재배정: backlog
-  2-4-예약-과별-의사별-색상-구분: review
+  2-4-예약-과별-의사별-색상-구분: done
   epic-2-retrospective: optional
 
   # Epic 3: 진료 기록 & 처방 (의사가 기록)
