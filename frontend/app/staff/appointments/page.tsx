@@ -138,7 +138,7 @@ export default function StaffAppointmentsPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         // toast-only 로 흘리지 않는다 — Dialog 안 인라인 오류 + 재시도(2.1 이월 교훈).
-        setDoctorOptions([]);
+        // doctorOptions 는 null 로 둔다 — 오류 표현은 doctorLoadError 가 단일 진실(리뷰 반영).
         setDoctorLoadError(
           err instanceof Error ? err.message : "의사 목록을 불러오지 못했어요.",
         );
@@ -159,6 +159,8 @@ export default function StaffAppointmentsPage() {
     [doctorCandidates],
   );
   const doctorsLoading = doctorTarget !== null && doctorOptions === null && !doctorLoadError;
+  // 바꿀 수 있는 다른 의사가 없는 상태(로드 완료·오류 없음·후보 0) — 안내 문구와 SR 연결에 공유.
+  const doctorsEmpty = !doctorsLoading && !doctorLoadError && doctorCandidates.length === 0;
 
   // 의사 변경 Dialog 열기 — 이전 열림의 후보/선택/오류를 초기화하고 로드를 다시 시작한다.
   function openDoctorChange(appt: Appointment) {
@@ -390,7 +392,18 @@ export default function StaffAppointmentsPage() {
               onValueChange={(v) => setNewDoctorId(v as string)}
               disabled={doctorsLoading || doctorCandidates.length === 0}
             >
-              <SelectTrigger id="new-doctor" className="w-full">
+              <SelectTrigger
+                id="new-doctor"
+                className="w-full"
+                aria-invalid={doctorLoadError ? true : undefined}
+                aria-describedby={
+                  doctorLoadError
+                    ? "new-doctor-error"
+                    : doctorsEmpty
+                      ? "new-doctor-empty"
+                      : undefined
+                }
+              >
                 <SelectValue
                   placeholder={
                     doctorsLoading ? "의사를 불러오는 중…" : "새 담당 의사를 선택하세요"
@@ -407,7 +420,7 @@ export default function StaffAppointmentsPage() {
             </Select>
             {doctorLoadError && (
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm text-destructive" role="alert">
+                <p id="new-doctor-error" className="text-sm text-destructive" role="alert">
                   {doctorLoadError}
                 </p>
                 <Button size="sm" variant="outline" onClick={retryDoctorLoad}>
@@ -415,8 +428,10 @@ export default function StaffAppointmentsPage() {
                 </Button>
               </div>
             )}
-            {!doctorsLoading && !doctorLoadError && doctorCandidates.length === 0 && (
-              <p className="text-sm text-muted-foreground">바꿀 수 있는 다른 의사가 없어요.</p>
+            {doctorsEmpty && (
+              <p id="new-doctor-empty" role="status" className="text-sm text-muted-foreground">
+                바꿀 수 있는 다른 의사가 없어요.
+              </p>
             )}
           </div>
           <DialogFooter>

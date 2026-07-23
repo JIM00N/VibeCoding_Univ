@@ -644,3 +644,29 @@ def test_change_doctor_missing_doctor_id_returns_422():
     client = TestClient(app)
     resp = client.patch("/appointments/10/doctor", json={})
     assert resp.status_code == 422
+
+
+def test_change_doctor_rejects_extra_status_field(monkeypatch):
+    # 엔드포인트 분리 고정(AD-5): /doctor 에 status 를 동봉하면 조용히 무시하지 않고 422 로 거부.
+    # (extra="forbid" — 호출자가 "완료 전이도 됐다"고 오인하는 조용한 의도 유실 차단.) db 미호출.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/doctor", json={"doctor_id": 4, "status": "완료"}
+    )
+
+    assert resp.status_code == 422
+
+
+def test_patch_status_rejects_extra_doctor_id_field(monkeypatch):
+    # 역방향 고정: 상태 전이 라우트에 doctor_id 를 동봉하면 422 — 재배정은 /doctor 경로만 담당.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10", json={"status": "확정", "doctor_id": 9})
+
+    assert resp.status_code == 422

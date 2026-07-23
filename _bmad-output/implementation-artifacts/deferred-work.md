@@ -1,5 +1,18 @@
 # Deferred Work
 
+## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
+
+- **의사↔진료과 검증 블록 2-소스** — `set_appointment_doctor`가 `create_appointment`(51-58)의 의사 존재·같은 과 검증(400 문구 2종 포함)을 바이트 중복. `_require_doctor_in_department(doctor_id, hd_id)` 추출로 해소. [backend/app/services/appointments.py:158-165]
+- **표시 조인 SQL 5번째 사본** — `_UPDATE_APPOINTMENT_DOCTOR`가 projection 사본을 4→5개로 늘림. 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:103-120]
+- **프런트 뮤테이션 골격 중복** — `runDoctorChange`/`runStatusChange`가 재진입 가드→pendingId→행 교체→toast→실패 reloadNonce 골격 공유(~-14줄 여지). 로컬 `runMutation` 헬퍼 후보. [frontend/app/staff/appointments/page.tsx:179-221]
+- **거부 문구 인라인 if/elif** — `_reject_message` 헬퍼 스타일 대신 인라인(도달 불가 else 포함). dict.get 한 줄로 8→3줄. [backend/app/services/appointments.py:148-155]
+- **renderActions 분기 버튼 중복** — 대기/확정 분기가 취소+의사 변경 버튼을 중복(~27→16줄 여지). [frontend/app/staff/appointments/page.tsx:233-259]
+- **DoctorChangeDialog 컴포넌트 추출** — Dialog 전용 상태 5종이 페이지 스코프에 산재(~430줄 페이지). 추출 시 페이지는 doctorTarget+성공 콜백만 유지. [frontend/app/staff/appointments/page.tsx:89-211]
+- **의사 목록 per-open 재요청** — Dialog를 열 때마다 같은 과 GET /doctors 반복(준정적 참조 데이터, 매번 로딩 표시). `useRef<Map<hd_id, Doctor[]>>` 캐시 후보. [frontend/app/staff/appointments/page.tsx:128-149]
+- **404/409 블록 중복** — `set_appointment_status`와 문구·구조 중복. `_fetch_appointment_or_404` + 공유 상수 후보(2.2 미러 컨벤션에 가까워 저우선). [backend/app/services/appointments.py:144-146·177-182]
+- **인플라이트 중 닫기 비대칭** — 의사 변경 Dialog는 실행-후-닫기라 PATCH 진행 중 Esc/닫기가 살아있음(AlertDialog는 닫고-실행). 데이터 무결성 문제는 없고 UX 일관성만. [frontend/app/staff/appointments/page.tsx:423]
+- **불변 단언의 동어반복** — "status·진료과 불변" 단위 테스트 단언이 monkeypatch fake의 에코 값 검증이라 SQL 회귀를 못 잡음(실 보증은 curl/브라우저 실측). 계약 테스트 아키텍처의 본질적 한계로 기록. [backend/tests/test_appointments.py:509-533]
+
 ## Deferred from: code review of 1-5-환자-신원-선택-역할-컨텍스트-바 (2026-07-17)
 
 - **저장된 신원을 서버와 대조하지 않음** — `usePatientIdentity()` 가 localStorage 원문을 파싱해 그대로 돌려줄 뿐 `GET /patients` 로 재검증하지 않는다. DB 재시드(`db/seed/004_seed.sql` 의 truncate·restart identity)나 환자 삭제 후 `id=1` 이 다른 사람에게 재할당되면, 브라우저는 `{"id":1,"name":"이수민"}` 을 계속 들고 있어 **이름은 이수민, 데이터는 남의 것**인 무성 불일치가 된다(Epic 4 의 `?patient_id=1` 이 그 id 를 쓴다). 저장된 이름은 만료 없는 PII 사본이기도 하다. 하드닝: 선택 화면이 목록을 받은 뒤 `if (patient && !rows.some(r => r.id === patient.id)) clearPatient()` 로 정리(현재 미사용인 `clearPatient` 를 여기서 쓰면 됨). 단 `/patient` 직접 진입 경로는 여전히 남으므로 Epic 4 의 실데이터 조회에서 근본 처리. [frontend/lib/patient-identity.ts, frontend/app/patient/select/page.tsx]
