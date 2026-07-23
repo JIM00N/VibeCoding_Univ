@@ -25,10 +25,23 @@ class AppointmentStatusUpdate(BaseModel):
 
     status 를 Literal 이 아니라 str 로 받는다 — 잘못된 값이 Pydantic 422(리스트 detail)면
     lib/api.ts 가 일반 메시지로 바꾼다. 서비스가 400 문자열 한국어로 막아 친절 문구를 띄운다(AD-10).
-    '완료'는 여기로 못 온다(Epic 3 진료기록의 tx 부작용, AD-5). 의사 변경(재배정)은 Story 2.3.
+    '완료'는 여기로 못 온다(Epic 3 진료기록의 tx 부작용, AD-5).
+    의사 변경(재배정)은 별도 요청 모델 AppointmentDoctorUpdate(별도 경로)가 담당한다.
     """
 
     status: str
+
+
+class AppointmentDoctorUpdate(BaseModel):
+    """담당 의사 변경(재배정) 요청(FR-7, P0). 새 doctor_id 하나만 받는다.
+
+    status 전이 요청(AppointmentStatusUpdate)과 경로·모델을 분리해 status 소유권(AD-5)과
+    의사 변경을 섞지 않는다. doctor_id 는 int 필수 — 누락은 422(2.2 의 status 누락과 동일 계약),
+    값 검증(의사 존재·같은 진료과·다른 의사)은 서비스가 400 한국어 문자열로 막는다(AD-10).
+    ⚠️ (의사, 슬롯) 가용성 재검사는 Epic 5(FR-15) — P0는 doctor_id 갱신만 한다.
+    """
+
+    doctor_id: int
 
 
 class AppointmentOut(BaseModel):

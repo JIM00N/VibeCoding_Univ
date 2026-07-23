@@ -94,6 +94,32 @@ _UPDATE_APPOINTMENT_STATUS = """
 """
 
 
+# 담당 의사 변경(Story 2.3, FR-7 P0) — doctor_id 만 UPDATE 하고 표시 필드를 조인해 한 왕복으로
+# 정규 모델 행을 돌려준다. _UPDATE_APPOINTMENT_STATUS 와 같은 compare-and-set 모양:
+# `status = any(%s)`(대기·확정)를 조건으로 걸어, 서비스 검증과 UPDATE 사이에 status 가 완료/취소로
+# 바뀌는 경합에서도 부적격 예약의 재배정이 성립하지 않는다. 조건 불일치는 0행 → None(서비스가 409).
+# status·reserved_at·hospital_department_id 는 건드리지 않는다(AD-5, 과 이동 없음).
+# ⚠️ (의사, 슬롯) 가용성 재검사·exclude_appointment_id 는 Epic 5. P0는 doctor_id 갱신만.
+_UPDATE_APPOINTMENT_DOCTOR = """
+    with updated as (
+        update public.appointment
+        set doctor_id = %s
+        where id = %s
+          and status = any(%s)
+        returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
+    )
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from updated a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+"""
+
+
 def fetch_doctor_department(doctor_id: int) -> int | None:
     """의사의 소속 진료과 id 를 반환한다. 의사가 없으면 None."""
     with get_pool().connection() as conn:
@@ -154,5 +180,24 @@ def update_appointment_status(
             cur.execute(
                 _UPDATE_APPOINTMENT_STATUS,
                 (new_status, appointment_id, list(allowed_sources)),
+            )
+            return cur.fetchone()
+
+
+def update_appointment_doctor(
+    appointment_id: int, doctor_id: int, allowed_sources: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """예약의 담당 의사를 조건부(compare-and-set)로 갱신하고 표시 필드까지 조인한 행을 반환한다.
+
+    현재 status 가 allowed_sources(대기·확정) 안에 있을 때만 UPDATE 한다 — 서비스가 먼저 적격성을
+    검증하지만, 검증과 UPDATE 사이에 status 가 바뀌는 경합에서도 이 원자적 가드가 부적격 재배정을
+    막는다. 조건 불일치(경합)·없는 id 는 0행 → None(서비스가 409 로 매핑).
+    파라미터화 SQL(injection 방지) — placeholder 순서는 SQL 대로 (doctor_id, appointment_id, sources).
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                _UPDATE_APPOINTMENT_DOCTOR,
+                (doctor_id, appointment_id, list(allowed_sources)),
             )
             return cur.fetchone()

@@ -472,3 +472,175 @@ def test_patch_missing_status_returns_422():
     client = TestClient(app)
     resp = client.patch("/appointments/10", json={})
     assert resp.status_code == 422
+
+
+# --- Story 2.3: PATCH /appointments/{id}/doctor (담당 의사 변경) ----------------
+
+
+def test_change_doctor_on_pending_appointment(monkeypatch):
+    # AC1/AC3: 대기 예약의 담당 의사 변경 — doctor_id 만 갱신, status 불변, 정규 모델 반환.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    captured: dict = {}
+
+    def fake_update(appointment_id, doctor_id, allowed_sources):
+        captured["args"] = (appointment_id, doctor_id)
+        captured["allowed"] = allowed_sources
+        return _fake_row(
+            id=appointment_id, status="대기", doctor_id=doctor_id, doctor_name="박서연"
+        )
+
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", fake_update)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 200
+    assert captured["args"] == (10, 4)
+    # compare-and-set: 대기·확정에서만 변경 허용 → UPDATE 에 그 출발 status 들이 전달된다.
+    assert "대기" in captured["allowed"] and "확정" in captured["allowed"]
+    data = resp.json()
+    # 응답에 새 doctor_id 와 doctor_name 이 함께 와야 색 배지(2.4)가 정합된다.
+    assert data["doctor_id"] == 4
+    assert data["doctor_name"] == "박서연"
+    # status·진료과는 불변(AD-5, 과 이동 없음).
+    assert data["status"] == "대기"
+    assert data["hospital_department_id"] == 2
+
+
+def test_change_doctor_on_confirmed_appointment(monkeypatch):
+    # AC1: 확정 예약도 담당 의사 변경 가능(대기·확정만).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="확정")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_doctor",
+        lambda aid, did, srcs: _fake_row(
+            id=aid, status="확정", doctor_id=did, doctor_name="박서연"
+        ),
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["doctor_id"] == 4
+    assert data["status"] == "확정"
+
+
+def test_change_doctor_unknown_appointment_returns_404(monkeypatch):
+    # 없는 예약 → fetch_appointment None → 404. 의사 조회·update 호출 금지.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: None)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/999/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 404
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_change_doctor_completed_rejected(monkeypatch):
+    # AC3: 완료 예약은 담당 의사 변경 불가 → 400. 의사 조회·update 호출 금지.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="완료")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 400
+    assert "완료" in resp.json()["detail"]
+
+
+def test_change_doctor_cancelled_rejected(monkeypatch):
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="취소")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 400
+    assert "취소" in resp.json()["detail"]
+
+
+def test_change_doctor_unknown_doctor_rejected(monkeypatch):
+    # 없는 의사 → fetch_doctor_department None → 400(2.1 문구 재사용). update 호출 금지.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: None)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 999})
+
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_change_doctor_wrong_department_rejected(monkeypatch):
+    # 다른 진료과 의사(소속 1 ≠ 예약 진료과 2) → 400 "진료과"(2.1 문구 재사용). update 호출 금지.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 1)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 5})
+
+    assert resp.status_code == 400
+    assert "진료과" in resp.json()["detail"]
+
+
+def test_change_doctor_same_doctor_rejected(monkeypatch):
+    # 현재 담당 의사(3)와 같은 의사로 변경 시도 → 400 "다른 의사". update 호출 금지.
+    monkeypatch.setattr(
+        appointments_db,
+        "fetch_appointment",
+        lambda aid: _fake_row(id=aid, status="대기", doctor_id=3),
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 3})
+
+    assert resp.status_code == 400
+    assert "다른 의사" in resp.json()["detail"]
+
+
+def test_change_doctor_race_returns_409(monkeypatch):
+    # 경합: fetch 시점엔 대기지만 CAS UPDATE 가 0행(None) — 그 사이 완료/취소로 바뀜 → 409.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    monkeypatch.setattr(
+        appointments_db, "update_appointment_doctor", lambda aid, did, srcs: None
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 409
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_change_doctor_missing_doctor_id_returns_422():
+    # doctor_id 누락 → Pydantic 필수 검증(422, 2.2 의 status 누락과 동일 계약).
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={})
+    assert resp.status_code == 422

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from app.schemas.appointments import (
     AppointmentCreate,
+    AppointmentDoctorUpdate,
     AppointmentOut,
     AppointmentStatusUpdate,
 )
@@ -38,6 +39,18 @@ def update_appointment_status(
     """예약 상태 전이(확정/취소, FR-7·FR-8) — 예약 서비스만 status 를 소유한다(AD-5).
 
     전이 규칙·거부는 서비스가 소유한다. 완료 전이는 Epic 3(진료기록 tx 부작용),
-    담당 의사 변경(재배정)은 Story 2.3 범위다.
+    담당 의사 변경(재배정)은 PATCH /appointments/{id}/doctor 가 담당한다.
     """
     return appointments_service.set_appointment_status(appointment_id, payload)
+
+
+@router.patch("/appointments/{appointment_id}/doctor", response_model=AppointmentOut)
+def update_appointment_doctor(
+    appointment_id: int, payload: AppointmentDoctorUpdate
+) -> AppointmentOut:
+    """담당 의사 변경(재배정, FR-7 P0) — doctor_id 만 갱신하고 status 는 건드리지 않는다(AD-5).
+
+    같은 진료과의 다른 의사만 허용(검증은 서비스 소유). 갱신된 예약을 정규 모델로 반환한다.
+    (의사, 슬롯) 가용성 재검사는 Epic 5(FR-7 P1) — P0는 갱신만.
+    """
+    return appointments_service.set_appointment_doctor(appointment_id, payload)
