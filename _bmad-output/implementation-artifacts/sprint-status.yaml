@@ -63,7 +63,7 @@ development_status:
   2-2-직원-예약-확정-취소-상태-흐름: done
   2-3-직원-담당-의사-변경-재배정: done
   2-4-예약-과별-의사별-색상-구분: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   # Epic 3: 진료 기록 & 처방 (의사가 기록)
   epic-3: backlog
@@ -84,20 +84,20 @@ development_status:
   5-3-walk-in-즉시-진료: backlog
   epic-5-retrospective: optional
 
-# Retrospective action items (Epic 1 회고, 2026-07-19)
+# Retrospective action items (Epic 1 회고 2026-07-19 · Epic 2 회고 2026-07-23)
 action_items:
   - epic: 1
     action: "'done' 정의에 '커밋 + 배포 + 라이브 확인' 3가지를 포함"
     owner: "지석(개발)"
-    status: open
+    status: done # Epic 2 전 스토리 마감 Task로 이행 확인 (Epic 2 회고)
   - epic: 1
     action: "dev-story 마감 시 코드+추적파일 즉시 커밋 (워킹트리 방치 금지)"
     owner: "지석(개발)"
-    status: open
+    status: done # Epic 2 전 스토리 브랜치 커밋→PR→머지 정착 (Epic 2 회고)
   - epic: 1
     action: "시드 truncate 처리 결정 (Epic 2 착수 전 필수) — 데모리셋+경고 / idempotent upsert / 비어있을 때만 시드"
     owner: "지석 + 아키텍처"
-    status: open
+    status: done # 2.1 Task 0 옵션 (c) 채택 + psql 트랜잭션 래핑 (Epic 2 회고)
   - epic: 1
     action: "Story 1.5 커밋·배포·라이브 검증"
     owner: "지석"
@@ -109,4 +109,24 @@ action_items:
   - epic: 1
     action: "deferred-work 13건을 처리 시점(Epic)별로 태깅"
     owner: "지석"
+    status: open # Epic 2 회고 액션 #2로 승계 (~30건으로 증가)
+  - epic: 2
+    action: "Epic 3 착수 전 테스트 데이터 정리 — 테스트 환자 12명 + Epic 2 테스트 예약 (시드 truncate 가드 유의)"
+    owner: "지석"
+    status: open
+  - epic: 2
+    action: "deferred-work ~30건 처리 시점(Epic)별 태깅 (Epic 1 액션 #6 승계)"
+    owner: "지석"
+    status: open
+  - epic: 2
+    action: "환경 셋업 문서화 — .env 생성 절차 + aws-1 Session 풀러 사유(IPv6 전용 직접 호스트)"
+    owner: "지석(개발)"
+    status: open
+  - epic: 2
+    action: "3.1 create-story의 Dev Notes에 트랜잭션 합성 방식(단일 db 함수·한 커넥션·한 tx) 명시"
+    owner: "개발(create-story)"
+    status: open
+  - epic: 2
+    action: "모바일 뷰포트 실측 방법 확보 — Playwright viewport 지정으로 카드 분기 시각 검증"
+    owner: "개발"
     status: open
