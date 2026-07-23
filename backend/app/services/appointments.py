@@ -7,6 +7,7 @@ from psycopg.errors import ForeignKeyViolation
 from app.db import appointments as appointments_db
 from app.schemas.appointments import (
     AppointmentCreate,
+    AppointmentDoctorUpdate,
     AppointmentOut,
     AppointmentStatusUpdate,
 )
@@ -22,6 +23,10 @@ _ALLOWED_SOURCE = {
     "확정": ("대기",),
     "취소": ("대기", "확정"),
 }
+
+# 담당 의사 변경(재배정)이 허용되는 출발 status — 대기·확정만(FR-7 P0).
+# 완료는 이미 진료가 끝났고, 취소는 무효라 재배정 대상이 아니다(에픽 AC·addendum A4 점유 대상과 일치).
+_DOCTOR_CHANGE_SOURCE = ("대기", "확정")
 
 
 def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
@@ -94,7 +99,7 @@ def set_appointment_status(
     - 없는 예약은 404. 거부·검증 위반은 4xx + 문자열 {detail}(lib/api.ts 가 그대로 표시, AD-10).
 
     ⚠️ 슬롯 점유/해제(check_and_occupy)는 Epic 5. 취소는 status 전이만 — Epic 5 충돌 쿼리가
-    취소를 제외하므로 슬롯 해제가 자연히 성립한다. 의사 변경(재배정)은 Story 2.3.
+    취소를 제외하므로 슬롯 해제가 자연히 성립한다. 의사 변경(재배정)은 set_appointment_doctor 가 담당한다.
     """
     target = payload.status
     if target not in _CLIENT_SETTABLE_STATUS:
@@ -116,6 +121,61 @@ def set_appointment_status(
     if row is None:
         # 위에서 존재·적격을 확인했으나 UPDATE 시점에 status 가 바뀐 경합(동시 확정/취소 등).
         # compare-and-set 가드가 금지 전이를 막았다 — 새로고침 후 재확인을 안내한다(409 Conflict).
+        raise HTTPException(
+            status_code=409,
+            detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",
+        )
+    return _to_appointment_out(row)
+
+
+def set_appointment_doctor(
+    appointment_id: int, payload: AppointmentDoctorUpdate
+) -> AppointmentOut:
+    """예약의 담당 의사를 같은 진료과의 다른 의사로 변경한다(FR-7 P0, 재배정).
+
+    - 대기·확정 예약만 변경 가능(완료·취소는 400). status 는 어떤 경로에서도 바꾸지 않는다(AD-5).
+    - 새 의사는 존재해야 하고(400), 그 예약의 진료과 소속이어야 하며(400 — 2.1 문구 재사용),
+      현재 담당 의사와 달라야 한다(400). 과 이동(hospital_department_id 변경)은 스코프 밖.
+    - UPDATE 는 compare-and-set(대기·확정 조건) — 검증과 UPDATE 사이 status 경합에서도
+      부적격 재배정이 성립하지 않는다. 0행이면 409(2.2 와 동일 안내).
+
+    ⚠️ (의사, 슬롯) 가용성 재검사·exclude_appointment_id 는 Epic 5(FR-7 P1). P0는 갱신만.
+    """
+    current = appointments_db.fetch_appointment(appointment_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+
+    if current["status"] not in _DOCTOR_CHANGE_SOURCE:
+        if current["status"] == "완료":
+            detail = "완료된 예약은 담당 의사를 바꿀 수 없어요."
+        elif current["status"] == "취소":
+            detail = "취소된 예약은 담당 의사를 바꿀 수 없어요."
+        else:
+            detail = "이 예약은 담당 의사를 바꿀 수 없어요."
+        raise HTTPException(status_code=400, detail=detail)
+
+    # AD-6: 의사↔진료과 소속 정합을 앱이 검증(2.1 create_appointment 와 같은 함수·문구).
+    doctor_hd = appointments_db.fetch_doctor_department(payload.doctor_id)
+    if doctor_hd is None:
+        raise HTTPException(status_code=400, detail="담당 의사를 찾을 수 없어요. 다시 선택해 주세요.")
+    if doctor_hd != current["hospital_department_id"]:
+        raise HTTPException(
+            status_code=400,
+            detail="선택한 진료과의 담당 의사가 아니에요. 의사를 다시 선택해 주세요.",
+        )
+
+    # 에픽 AC: "같은 진료과의 **다른** 의사" — 같은 의사로의 변경은 무의미라 거부.
+    if payload.doctor_id == current["doctor_id"]:
+        raise HTTPException(
+            status_code=400,
+            detail="이미 담당하고 있는 의사예요. 다른 의사를 선택해 주세요.",
+        )
+
+    row = appointments_db.update_appointment_doctor(
+        appointment_id, payload.doctor_id, _DOCTOR_CHANGE_SOURCE
+    )
+    if row is None:
+        # 검증과 UPDATE 사이에 status 가 완료/취소로 바뀐 경합 — CAS 가드가 재배정을 막았다.
         raise HTTPException(
             status_code=409,
             detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",

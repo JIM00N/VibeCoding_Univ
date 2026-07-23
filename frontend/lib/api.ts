@@ -164,4 +164,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  /** 담당 의사 변경(재배정, FR-7 P0). 성공 시 갱신된 예약(정규 모델 — 새 doctor_id·doctor_name)을
+   *  돌려준다. 같은 과 아님·완료/취소 예약·경합(409) 등은 request 가 4xx {detail} 한국어로 던진다.
+   *  (의사, 슬롯) 가용성 재검사는 Epic 5 — P0는 갱신만. */
+  updateAppointmentDoctor: (id: number, doctorId: number): Promise<Appointment> =>
+    request<Appointment>(`/appointments/${id}/doctor`, {
+      method: "PATCH",
+      body: JSON.stringify({ doctor_id: doctorId }),
+    }),
 };
