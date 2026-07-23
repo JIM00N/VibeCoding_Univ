@@ -113,7 +113,7 @@ action_items:
   - epic: 2
     action: "Epic 3 착수 전 테스트 데이터 정리 — 테스트 환자 12명 + Epic 2 테스트 예약 (시드 truncate 가드 유의)"
     owner: "지석"
-    status: open
+    status: done # 2026-07-23 실행 — 예약 8·테스트 환자 9 삭제, 시드 보존, 라이브 API 검증 (db/maintenance/2026-07-23-cleanup-test-data.sql)
   - epic: 2
     action: "deferred-work ~30건 처리 시점(Epic)별 태깅 (Epic 1 액션 #6 승계)"
     owner: "지석"
