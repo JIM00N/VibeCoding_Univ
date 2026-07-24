@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
@@ -75,6 +76,7 @@ function renderDoctor(appt: Appointment) {
 }
 
 export default function StaffAppointmentsPage() {
+  const router = useRouter();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   // 조회 실패를 빈 상태와 구분한다 — 오류를 빈 상태로 렌더하면 백엔드 다운을 "예약 없음"으로 오인한다(1.4 규율).
@@ -256,6 +258,15 @@ export default function StaffAppointmentsPage() {
           </Button>
           <Button size="sm" variant="outline" onClick={() => openDoctorChange(appt)} disabled={busy}>
             의사 변경
+          </Button>
+          {/* 진료 기록 작성(Story 3.1) — 확정 예약에만 진입(EXPERIENCE IA). 저장 시 완료 전이. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => router.push(`/staff/appointments/${appt.id}/record`)}
+            disabled={busy}
+          >
+            기록 작성
           </Button>
         </div>
       );

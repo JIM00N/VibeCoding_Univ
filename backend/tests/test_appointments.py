@@ -670,3 +670,43 @@ def test_patch_status_rejects_extra_doctor_id_field(monkeypatch):
     resp = client.patch("/appointments/10", json={"status": "확정", "doctor_id": 9})
 
     assert resp.status_code == 422
+
+
+def test_get_single_appointment_returns_canonical_shape(monkeypatch):
+    # GET /appointments/{id} (Story 3.1) — 진료 기록 페이지가 대상 예약을 로드한다.
+    monkeypatch.setattr(
+        appointments_db,
+        "fetch_appointment",
+        lambda aid: _fake_row(id=aid, status="확정"),
+    )
+
+    client = TestClient(app)
+    resp = client.get("/appointments/10")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # AD-10: 목록·PATCH 와 동일한 AppointmentOut 정규 모델(리소스당 응답 모델 1개).
+    assert set(data.keys()) == {
+        "id",
+        "patient_id",
+        "hospital_department_id",
+        "doctor_id",
+        "reserved_at",
+        "status",
+        "patient_name",
+        "doctor_name",
+        "department_name",
+    }
+    assert data["id"] == 10
+    assert data["status"] == "확정"
+
+
+def test_get_single_appointment_unknown_returns_404(monkeypatch):
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: None)
+
+    client = TestClient(app)
+    resp = client.get("/appointments/999")
+
+    assert resp.status_code == 404
+    # FastAPI 기본 "Not Found" 가 아니라 서비스의 한국어 {detail} 이어야 한다(AD-10).
+    assert resp.json()["detail"] == "예약을 찾을 수 없어요."

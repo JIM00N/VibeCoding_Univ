@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-23
+last_updated: 2026-07-24
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -66,8 +66,8 @@ development_status:
   epic-2-retrospective: done
 
   # Epic 3: 진료 기록 & 처방 (의사가 기록)
-  epic-3: backlog
-  3-1-확정-예약에-진료-기록-작성-완료-전이: backlog
+  epic-3: in-progress
+  3-1-확정-예약에-진료-기록-작성-완료-전이: review
   3-2-진료-기록에-처방-추가: backlog
   epic-3-retrospective: optional
 
@@ -125,7 +125,7 @@ action_items:
   - epic: 2
     action: "3.1 create-story의 Dev Notes에 트랜잭션 합성 방식(단일 db 함수·한 커넥션·한 tx) 명시"
     owner: "개발(create-story)"
-    status: open
+    status: done # 2026-07-24 3.1 스토리 파일 "트랜잭션 설계" 절에 단일 CTE 문 청사진으로 이행
   - epic: 2
     action: "모바일 뷰포트 실측 방법 확보 — Playwright viewport 지정으로 카드 분기 시각 검증"
     owner: "개발"

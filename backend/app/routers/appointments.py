@@ -32,6 +32,15 @@ def list_appointments() -> list[AppointmentOut]:
     return appointments_service.list_appointments()
 
 
+@router.get("/appointments/{appointment_id}", response_model=AppointmentOut)
+def get_appointment(appointment_id: int) -> AppointmentOut:
+    """예약 단건 조회(Story 3.1). 진료 기록 페이지가 대상 예약(상태·표시 필드)을 로드한다.
+
+    목록·PATCH 와 같은 AppointmentOut 정규 모델(AD-10). 없으면 404 한국어.
+    """
+    return appointments_service.get_appointment(appointment_id)
+
+
 @router.patch("/appointments/{appointment_id}", response_model=AppointmentOut)
 def update_appointment_status(
     appointment_id: int, payload: AppointmentStatusUpdate
