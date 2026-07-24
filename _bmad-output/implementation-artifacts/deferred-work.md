@@ -8,6 +8,10 @@
 - **naive→UTC 규약 인라인 2사본** — services/medical_records.py 인라인 정규화 ↔ slots.to_slot 내부(19-20)가 주석으로만 연결. Epic 4(날짜 필터)·5.3(walk-in visited_at) 전에 공유 `ensure_utc()` 또는 `UtcDatetime = Annotated[datetime, AfterValidator]` 로 경계 수렴 권장. [backend/app/services/medical_records.py:59, backend/app/slots.py:19-20]
 - **`_blank_str_to_none` 검증자 2사본** — patients ↔ medical_records 스키마에 동일 검증자 중복(3.2 처방 dosage 가 3번째 후보). 공유 함수/Annotated 타입으로 수렴 가능. [backend/app/schemas/medical_records.py:29, backend/app/schemas/patients.py:23]
 - **가드 pre-fetch 의 4-조인 폭** — `create_medical_record` 가드는 status·doctor_id 만 읽는데 표시용 4-조인 9컬럼 쿼리를 재사용(왕복 자체는 상태별 400 문구 계약상 필요). 최소 셀렉트 `fetch_appointment_status` 분리는 이 규모에선 저우선. [backend/app/services/medical_records.py:33]
+- **저장 성공 직후 이중 제출 창** — 기록 저장 성공 시 `finally`가 `submitting`을 풀고 `router.push` 완료 전까지 버튼이 잠깐 재활성. 재제출해도 서버 가드(완료 400·중복 409)가 막아 무해 — 성공 경로에서 submitting 유지(내비게이션까지)로 정리 가능. [frontend/app/staff/appointments/[id]/record/page.tsx:96-107]
+- **URL id 의 `Number()` 관용 파싱** — `/staff/appointments/0x1F/record` 같은 16진/지수 표기가 `Number()`로 유효 id 가 됨(서버 404 가 최종 방어라 무해). 엄격 파싱은 `/^\d+$/` 검사로. [frontend/app/staff/appointments/[id]/record/page.tsx:29-31]
+- **doctor-null CAS 경합의 409 문구** — `and doctor_id is not null` 로 걸린 0행도 "예약 상태가 방금 바뀌었어요"(상태 문구)로 안내됨. 의사 지정 변화 문구 분리는 도달 불가 경합의 문구 정밀화라 저우선. [backend/app/services/medical_records.py:79-84]
+- **record 페이지 죽은 `: null` 삼항 가지** — 로드 성공 시 `appt`가 항상 채워져 마지막 `: null` 가지는 도달 불가(방어적 타입 정직). 정리 시 조건 구조 단순화 가능. [frontend/app/staff/appointments/[id]/record/page.tsx:226]
 
 ## Deferred from: Codex 사전 리뷰 of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
 

@@ -217,6 +217,7 @@ export default function MedicalRecordNewPage() {
                     type="button"
                     variant="ghost"
                     onClick={() => router.push("/staff/appointments")}
+                    disabled={submitting}
                   >
                     취소
                   </Button>

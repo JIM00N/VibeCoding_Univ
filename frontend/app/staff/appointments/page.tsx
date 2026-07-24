@@ -233,7 +233,7 @@ export default function StaffAppointmentsPage() {
 
   const busy = pendingId !== null;
 
-  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경, 완료/취소 → 액션 없음.
+  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경+기록 작성, 완료/취소 → 액션 없음.
   function renderActions(appt: Appointment) {
     if (appt.status === "대기") {
       return (
