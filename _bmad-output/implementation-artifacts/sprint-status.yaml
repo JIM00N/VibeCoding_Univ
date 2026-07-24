@@ -67,7 +67,7 @@ development_status:
 
   # Epic 3: 진료 기록 & 처방 (의사가 기록)
   epic-3: in-progress
-  3-1-확정-예약에-진료-기록-작성-완료-전이: review
+  3-1-확정-예약에-진료-기록-작성-완료-전이: done
   3-2-진료-기록에-처방-추가: backlog
   epic-3-retrospective: optional
 
