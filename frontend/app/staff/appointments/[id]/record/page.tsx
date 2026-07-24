@@ -122,7 +122,11 @@ export default function MedicalRecordNewPage() {
           ) : loading ? (
             <FormSkeleton />
           ) : loadError ? (
-            <ErrorState message={loadError} onRetry={() => setReloadNonce((n) => n + 1)} />
+            <ErrorState
+              message={loadError}
+              onRetry={() => setReloadNonce((n) => n + 1)}
+              onBack={() => router.push("/staff/appointments")}
+            />
           ) : notConfirmed ? (
             <NoticeState
               message="확정된 예약에만 진료 기록을 작성할 수 있어요."
@@ -239,13 +243,25 @@ function FormSkeleton() {
 }
 
 // 조회 오류 상태 — "다시 시도" 제공(백엔드 다운을 "작성 불가"로 오인하지 않게 안내와 구분).
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+// 목록 복귀 경로도 함께 — 404(삭제된 예약·오래된 링크)는 재시도가 영원히 실패하므로 탈출구 필수.
+function ErrorState({
+  message,
+  onRetry,
+  onBack,
+}: {
+  message: string;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
   return (
     <div className="rounded-xl border border-dashed py-16 text-center">
       <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4">
+      <div className="mt-4 flex justify-center gap-3">
         <Button variant="outline" onClick={onRetry}>
           다시 시도
+        </Button>
+        <Button variant="ghost" onClick={onBack}>
+          예약 목록으로
         </Button>
       </div>
     </div>

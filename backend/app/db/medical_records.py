@@ -21,6 +21,10 @@ from app.db.pool import get_pool
 #      완료 전이도 함께 롤백된다(기록 없이 완료되는 예약 없음, AC4).
 #   3) 최종 SELECT: 표시 필드(patient_name·doctor_name·department_name)를 조인해 한 왕복으로 반환.
 #      doctor 는 INNER JOIN — medical_record.doctor_id 는 NOT NULL(appointments 의 LEFT 와 다름).
+#      ⚠️ 경계: fetchone() None 은 서비스가 전부 CAS 0행(409)으로 해석한다. 최종 SELECT 의 INNER
+#      JOIN 미스도 이론상 None 을 만들 수 있으나(이 경우 쓰기는 커밋됨), 현 스키마(복사 컬럼 NOT
+#      NULL + FK RESTRICT/CASCADE)에선 도달 불가. NOT NULL 완화·조인 필터(soft delete 등) 도입
+#      마이그레이션 시 두 0행 원인을 구분할 것.
 # ⚠️ 슬롯 점유(check_and_occupy)는 Epic 5 — 예약 기반 기록은 슬롯을 새로 점유하지 않는다(완료=과거).
 _INSERT_RECORD_AND_COMPLETE = """
     with completed as (

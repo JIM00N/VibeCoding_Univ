@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   Dialog,
@@ -56,6 +56,7 @@ import {
 import { api, type Appointment, type AppointmentStatus, type Doctor } from "@/lib/api";
 import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
 import { formatReservedAt } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 // 진료과: 진료과별 색 배지(항상 존재). 색은 hospital_department_id 로 결정적 매핑(category-color).
 function renderDepartment(appt: Appointment) {
@@ -76,7 +77,6 @@ function renderDoctor(appt: Appointment) {
 }
 
 export default function StaffAppointmentsPage() {
-  const router = useRouter();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   // 조회 실패를 빈 상태와 구분한다 — 오류를 빈 상태로 렌더하면 백엔드 다운을 "예약 없음"으로 오인한다(1.4 규율).
@@ -259,15 +259,15 @@ export default function StaffAppointmentsPage() {
           <Button size="sm" variant="outline" onClick={() => openDoctorChange(appt)} disabled={busy}>
             의사 변경
           </Button>
-          {/* 진료 기록 작성(Story 3.1) — 확정 예약에만 진입(EXPERIENCE IA). 저장 시 완료 전이. */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => router.push(`/staff/appointments/${appt.id}/record`)}
-            disabled={busy}
+          {/* 진료 기록 작성(Story 3.1) — 확정 예약에만 진입(EXPERIENCE IA). 저장 시 완료 전이.
+              내비게이션이라 Link(새 탭·프리페치·SR 내비 시맨틱) — 버튼 스타일만 빌린다. */}
+          <Link
+            href={`/staff/appointments/${appt.id}/record`}
+            // cn(tailwind-merge) 필수 — base 의 border-transparent 가 outline 의 border-border 를 덮는 충돌 정리
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             기록 작성
-          </Button>
+          </Link>
         </div>
       );
     }
