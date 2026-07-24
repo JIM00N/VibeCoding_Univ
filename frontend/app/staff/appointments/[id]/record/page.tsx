@@ -4,9 +4,9 @@
 // POST /medical-records 로 기록을 만들면 같은 트랜잭션에서 그 예약이 확정→완료로 전이된다(AD-5).
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1, AD-10). 저장은 비관적(서버 확정 후 반영).
 // 대상 예약이 확정일 때만 폼을 보여준다 — URL 직접 진입 등 비확정이면 안내만(Component Patterns).
-// 처방(0..N 행)은 Story 3.2 가 이 페이지에 얹는다(진료 내용 카드와 액션 사이).
+// 처방 행(0..N, FR-10 Story 3.2)은 같은 <form> 안 — 저장 시 기록·완료 전이와 한 트랜잭션으로 저장된다.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -16,10 +16,27 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type Appointment } from "@/lib/api";
+import { api, type Appointment, type Drug } from "@/lib/api";
 import { formatReservedAt } from "@/lib/format";
+
+// 처방 행 폼 상태. key 는 증가 카운터 — 배열 index 를 key 로 쓰면 중간 삭제 시 입력값이 밀린다.
+type RxRow = {
+  key: number;
+  drugId: string | null;
+  dosage: string;
+  days: string;
+  drugError: string | null;
+  daysError: string | null;
+};
 
 export default function MedicalRecordNewPage() {
   const router = useRouter();
@@ -42,6 +59,56 @@ export default function MedicalRecordNewPage() {
   const [visitedAt] = useState(() => new Date());
   // 동기 재진입 가드 — submitting(state)은 같은 tick 연타 사이에 아직 갱신 전이라 ref 로 즉시 막는다.
   const submittingRef = useRef(false);
+
+  // 약 목록(Story 3.2) — 예약 로드와 독립된 오류 상태 + 다시 시도(2.1 deferred 교훈: toast-only 금지).
+  // 로드 실패해도 기록 저장은 가능하다(처방 없이) — 처방 섹션만 비활성.
+  const [drugs, setDrugs] = useState<Drug[] | null>(null);
+  const [drugsError, setDrugsError] = useState<string | null>(null);
+  const [drugsNonce, setDrugsNonce] = useState(0);
+
+  // 처방 행(0..N). key 는 증가 카운터(ref) — index-key 의 중간 삭제 밀림 버그 회피.
+  const [rxRows, setRxRows] = useState<RxRow[]>([]);
+  const rxKeyRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getDrugs()
+      .then((rows) => {
+        if (cancelled) return;
+        setDrugs(rows);
+        setDrugsError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDrugs(null);
+        setDrugsError("약 목록을 불러오지 못했어요.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drugsNonce]);
+
+  const drugItems = useMemo(
+    () => Object.fromEntries((drugs ?? []).map((d) => [String(d.id), d.name])),
+    [drugs],
+  );
+
+  function addRxRow() {
+    rxKeyRef.current += 1;
+    setRxRows((rows) => [
+      ...rows,
+      { key: rxKeyRef.current, drugId: null, dosage: "", days: "", drugError: null, daysError: null },
+    ]);
+  }
+
+  function removeRxRow(key: number) {
+    setRxRows((rows) => rows.filter((r) => r.key !== key));
+  }
+
+  function patchRxRow(key: number, patch: Partial<RxRow>) {
+    setRxRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
 
   useEffect(() => {
     if (!validId) return;
@@ -72,13 +139,23 @@ export default function MedicalRecordNewPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!appt) return;
-    // 인라인 검증: 진단명 필수(공백만도 불가). 서버 도달 전에 먼저 막는다(UX-DR9).
+    // 인라인 검증: 진단명 필수 + 처방 행별(약 선택·일수 ≥ 1). 서버 도달 전에 먼저 막는다(UX-DR9).
     const trimmed = diagnosis.trim();
-    if (!trimmed) {
-      setDiagnosisError("진단명을 입력해 주세요.");
-      return;
-    }
-    setDiagnosisError(null);
+    setDiagnosisError(trimmed ? null : "진단명을 입력해 주세요.");
+    const checked = rxRows.map((r) => {
+      const daysTrim = r.days.trim();
+      return {
+        ...r,
+        drugError: r.drugId ? null : "약을 선택해 주세요.",
+        // 정수 판정은 정규식으로 — Number() 단독은 16진수·지수 표기("0x3"·"3e1")도 통과시킨다.
+        daysError:
+          daysTrim && !(/^\d+$/.test(daysTrim) && Number(daysTrim) >= 1)
+            ? "처방 일수는 1 이상의 숫자로 입력해 주세요."
+            : null,
+      };
+    });
+    setRxRows(checked);
+    if (!trimmed || checked.some((r) => r.drugError || r.daysError)) return;
 
     if (submittingRef.current) return; // 동기 재진입 가드(같은 tick 더블클릭·연타 차단)
     submittingRef.current = true;
@@ -89,17 +166,22 @@ export default function MedicalRecordNewPage() {
         diagnosis: trimmed,
         notes: notes.trim() || null,
         visited_at: visitedAt.toISOString(),
+        prescriptions: checked.map((r) => ({
+          drug_id: Number(r.drugId),
+          dosage: r.dosage.trim() || null,
+          days: r.days.trim() ? Number(r.days.trim()) : null,
+        })),
       });
       toast.success("진료 기록을 저장했어요.");
       // 목록으로 복귀 — 목록이 서버에서 재조회되며 해당 예약 배지가 완료(green)로 표시된다.
+      // 성공 시 submitting 을 풀지 않는다 — 내비게이션까지 비활성 유지(이중 제출 창 제거, deferred 이행).
       router.push("/staff/appointments");
     } catch (err) {
-      // 확정 아님(400)·기록 중복(409)·경합(409) 등은 request 가 4xx 한국어로 던진다(AD-10).
+      // 확정 아님(400)·기록 중복(409)·경합(409)·없는 약(400) 등은 request 가 4xx 한국어로 던진다(AD-10).
       const message = err instanceof Error ? err.message : "요청을 처리하지 못했어요.";
       toast.error(message);
       // 실패는 대상 예약이 stale 일 수 있다는 신호 — 서버 진실로 재동기화한다(비확정이면 안내로 전환).
       setReloadNonce((n) => n + 1);
-    } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -113,7 +195,7 @@ export default function MedicalRecordNewPage() {
       <main className="mx-auto w-full max-w-2xl px-6 py-8">
         <h1 className="text-[28px] font-bold leading-tight">진료 기록 작성</h1>
         <p className="mt-2 text-muted-foreground">
-          확정된 예약에 진단과 소견을 남겨요. 저장하면 이 예약은 완료로 바뀌어요.
+          확정된 예약에 진단·소견·처방을 남겨요. 저장하면 이 예약은 완료로 바뀌어요.
         </p>
 
         <div className="mt-6">
@@ -203,6 +285,156 @@ export default function MedicalRecordNewPage() {
                     className="bg-muted/50"
                   />
                 </div>
+
+                {/* 처방 (0..N, FR-10 Story 3.2 — 목업 record.html 처방 카드). 같은 폼 안 — 저장 시
+                    기록·완료 전이와 한 트랜잭션. 약 목록이 없어도 기록 저장은 가능(섹션만 비활성). */}
+                <section aria-label="처방" className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold">
+                      처방{" "}
+                      <span className="text-[13px] font-normal text-muted-foreground">
+                        (0개 이상)
+                      </span>
+                    </h2>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addRxRow}
+                      disabled={drugs === null}
+                    >
+                      + 처방 추가
+                    </Button>
+                  </div>
+
+                  {drugsError && (
+                    <div className="flex items-center gap-3 rounded-lg border border-dashed px-3 py-2">
+                      <p className="text-sm text-muted-foreground" role="alert">
+                        {drugsError}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDrugsNonce((n) => n + 1)}
+                      >
+                        다시 시도
+                      </Button>
+                    </div>
+                  )}
+
+                  {rxRows.length === 0 ? (
+                    !drugsError && (
+                      <p className="py-1.5 text-sm text-muted-foreground">
+                        추가된 처방이 없어요. 처방 없이 저장할 수 있어요.
+                      </p>
+                    )
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {/* 칼럼 라벨 행 — 시각용(모바일 2열 접힘에선 숨김). 각 입력엔 행 번호 포함 sr-only 라벨. */}
+                      <div
+                        aria-hidden
+                        className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[2fr_1.6fr_0.9fr_auto]"
+                      >
+                        <span>약</span>
+                        <span>용법·용량</span>
+                        <span>일수</span>
+                        <span className="w-8" />
+                      </div>
+                      {rxRows.map((r, idx) => (
+                        <div
+                          key={r.key}
+                          className="grid grid-cols-2 items-start gap-2 sm:grid-cols-[2fr_1.6fr_0.9fr_auto]"
+                        >
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`rx-${r.key}-drug`} className="sr-only">
+                              처방 {idx + 1} 약
+                            </Label>
+                            <Select
+                              items={drugItems}
+                              value={r.drugId}
+                              onValueChange={(v) =>
+                                patchRxRow(r.key, { drugId: v as string, drugError: null })
+                              }
+                            >
+                              <SelectTrigger
+                                id={`rx-${r.key}-drug`}
+                                className="w-full"
+                                aria-invalid={r.drugError ? true : undefined}
+                                aria-describedby={r.drugError ? `rx-${r.key}-drug-error` : undefined}
+                              >
+                                <SelectValue placeholder="약을 선택하세요" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(drugs ?? []).map((d) => (
+                                  <SelectItem key={d.id} value={String(d.id)}>
+                                    {d.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {r.drugError && (
+                              <p
+                                id={`rx-${r.key}-drug-error`}
+                                role="alert"
+                                className="text-sm text-destructive"
+                              >
+                                {r.drugError}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`rx-${r.key}-dosage`} className="sr-only">
+                              처방 {idx + 1} 용법·용량
+                            </Label>
+                            <Input
+                              id={`rx-${r.key}-dosage`}
+                              value={r.dosage}
+                              onChange={(e) => patchRxRow(r.key, { dosage: e.target.value })}
+                              placeholder="예: 1일 3회 식후"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`rx-${r.key}-days`} className="sr-only">
+                              처방 {idx + 1} 일수
+                            </Label>
+                            <Input
+                              id={`rx-${r.key}-days`}
+                              value={r.days}
+                              onChange={(e) =>
+                                patchRxRow(r.key, { days: e.target.value, daysError: null })
+                              }
+                              placeholder="예: 3"
+                              inputMode="numeric"
+                              aria-invalid={r.daysError ? true : undefined}
+                              aria-describedby={r.daysError ? `rx-${r.key}-days-error` : undefined}
+                            />
+                            {r.daysError && (
+                              <p
+                                id={`rx-${r.key}-days-error`}
+                                role="alert"
+                                className="text-sm text-destructive"
+                              >
+                                {r.daysError}
+                              </p>
+                            )}
+                          </div>
+                          {/* 모바일 2열 접힘 — 삭제 버튼은 둘째 행 우측(목업 560px 분기 상당). */}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            aria-label={`처방 ${idx + 1} 삭제`}
+                            className="justify-self-end text-destructive sm:justify-self-auto"
+                            onClick={() => removeRxRow(r.key)}
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
                 <p className="text-sm text-muted-foreground">
                   저장 순간, 이 예약은 확정 → 완료로 자동 전이돼요. 한 예약엔 진료 기록 1건만
