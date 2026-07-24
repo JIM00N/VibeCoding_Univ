@@ -1,6 +1,8 @@
 """진료 기록 비즈니스 규칙 계층 (AD-2). 확정 가드·스냅샷 계약을 소유하고 db 계층을 호출한다."""
 from __future__ import annotations
 
+from datetime import timezone
+
 from fastapi import HTTPException
 from psycopg.errors import UniqueViolation
 
@@ -51,11 +53,17 @@ def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
             detail="담당 의사가 지정되지 않은 예약이에요. 담당 의사를 먼저 지정해 주세요.",
         )
 
+    # 시각 규약: tz-naive visited_at 은 UTC 로 간주한다(slots.to_slot 과 동일 규약) — 원시 바인딩은
+    # Postgres 세션 TimeZone 에 해석을 맡겨, 세션 tz 가 UTC 가 아니면 저장 시점이 조용히 밀린다.
+    visited_at = payload.visited_at
+    if visited_at.tzinfo is None:
+        visited_at = visited_at.replace(tzinfo=timezone.utc)
+
     # 스냅샷 3필드는 여기서 전달하지 않는다 — SQL 이 예약 행에서 그 순간 값을 복사한다(AD-6).
     try:
         row = medical_records_db.insert_medical_record_and_complete(
             payload.appointment_id,
-            payload.visited_at,
+            visited_at,
             diagnosis,
             payload.notes,
         )

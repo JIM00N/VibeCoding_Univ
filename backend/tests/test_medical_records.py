@@ -176,6 +176,32 @@ def test_create_record_blank_notes_normalized_to_none(monkeypatch):
     assert captured["notes"] is None
 
 
+def test_create_record_naive_visited_at_normalized_to_utc(monkeypatch):
+    # tz-naive visited_at 은 UTC 로 간주한다(slots.to_slot 동일 규약) — 세션 TimeZone 의존 제거.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    captured: dict = {}
+
+    def fake_insert(appointment_id, visited_at, diagnosis, notes):
+        captured["visited_at"] = visited_at
+        return _fake_record_row(appointment_id=appointment_id, visited_at=visited_at)
+
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", fake_insert
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records", json=_payload(visited_at="2026-07-24T01:35:00")
+    )
+
+    assert resp.status_code == 201
+    saved = captured["visited_at"]
+    assert saved.tzinfo is not None
+    assert saved == datetime(2026, 7, 24, 1, 35, tzinfo=timezone.utc)
+
+
 # ── 도메인 가드 (AC2) — 거부 경로에서 쓰기 db 함수는 호출되지 않는다 ──
 
 
