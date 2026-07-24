@@ -12,6 +12,8 @@ from app.db.pool import get_pool
 # 두 쓰기를 "단일 CTE 문"으로 합성해 문장 원자성으로 해결한다(Epic 2 회고 액션 #4 —
 # 단일 db 함수·한 커넥션·한 tx. 서비스가 두 db 호출로 쪼개면 커넥션이 달라 원자성이 깨진다):
 #   1) completed: 확정 예약만 완료로 UPDATE (compare-and-set — 검증과 쓰기 사이 status 경합 차단).
+#      `doctor_id is not null` 도 조건에 포함 — 검증과 쓰기 사이에 doctor_id 가 null 로 바뀌는
+#      경합(의사 행 삭제의 FK SET NULL 등)이 NOT NULL 삽입 500 으로 새지 않고 0행 → 409 로 수렴.
 #      0행이면 inserted 도 0행 → fetchone() None(아무것도 안 씀, 서비스가 409).
 #   2) inserted: 예약 행에서 patient_id·hospital_department_id·doctor_id 를 그 순간 값으로 복사해
 #      INSERT (AD-6 스냅샷 — 클라이언트 값도, 별도 fetch 값도 신뢰하지 않아 경합 여지 자체가 없다).
@@ -26,6 +28,7 @@ _INSERT_RECORD_AND_COMPLETE = """
         set status = '완료'
         where id = %s
           and status = '확정'
+          and doctor_id is not null
         returning id, patient_id, hospital_department_id, doctor_id
     ),
     inserted as (

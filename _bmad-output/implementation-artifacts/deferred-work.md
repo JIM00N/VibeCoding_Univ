@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: Codex 사전 리뷰 of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
+
+- **`UniqueViolation` catch가 위반 제약 이름 미확인** — `create_medical_record`의 except 블록이 모든 유니크 위반을 "이미 진료 기록이 있는 예약"(409)으로 매핑. 현재 `medical_record`의 유니크 제약은 부분 유니크 `uq_medical_record_appointment` 하나뿐(PK 는 identity)이라 실질 오분류 경로 없음. 유니크 제약이 추가되거나 OVERRIDING 삽입으로 시퀀스가 뒤처질 수 있게 되면 `exc.diag.constraint_name` 확인으로 정밀화(단, 손제작 예외의 diag 는 None 이라 테스트 페이크 방식 함께 조정 필요). [backend/app/services/medical_records.py:62-68]
+- **계약 테스트가 실 CTE/제약/timestamptz 미실행** — `test_medical_records.py`가 db 계층을 monkeypatch 해 SQL 회귀를 못 잡는 것은 2-3 리뷰에서 기록된 계약 테스트 아키텍처의 본질적 한계와 동일. 3.1의 실 보증은 라이브 Supabase curl 실증(원자성·중복 409 롤백 포함, dev-story Debug Log)으로 수행됨. [backend/tests/test_medical_records.py]
+
 ## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
 
 - **의사↔진료과 검증 블록 2-소스** — `set_appointment_doctor`가 `create_appointment`(51-58)의 의사 존재·같은 과 검증(400 문구 2종 포함)을 바이트 중복. `_require_doctor_in_department(doctor_id, hd_id)` 추출로 해소. [backend/app/services/appointments.py:158-165]
