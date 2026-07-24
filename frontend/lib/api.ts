@@ -63,6 +63,31 @@ export type AppointmentCreate = {
   reserved_at: string;
 };
 
+// 진료 기록 정규 응답 모델(AD-10, Story 3.1). patient_id·hospital_department_id·doctor_id 는
+// 작성 시점 예약 값의 스냅샷 복사(AD-6, 이력 불변). appointment_id 는 walk-in(5.3)에서만 null.
+export type MedicalRecord = {
+  id: number;
+  appointment_id: number | null;
+  patient_id: number;
+  hospital_department_id: number;
+  doctor_id: number;
+  visited_at: string;
+  diagnosis: string | null;
+  notes: string | null;
+  patient_name: string;
+  doctor_name: string;
+  department_name: string;
+};
+
+// 진료 기록 작성 요청(FR-9, Story 3.1). 스냅샷 3필드는 보내지 않는다 — 서버 SQL 이 예약 행에서
+// 복사하고, 동봉하면 extra=forbid 로 422. visited_at 은 ISO-8601 UTC. 처방(0..N)은 Story 3.2.
+export type MedicalRecordCreate = {
+  appointment_id: number;
+  diagnosis: string;
+  notes?: string | null;
+  visited_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -172,5 +197,19 @@ export const api = {
     request<Appointment>(`/appointments/${id}/doctor`, {
       method: "PATCH",
       body: JSON.stringify({ doctor_id: doctorId }),
+    }),
+
+  /** 예약 단건 조회(Story 3.1). 진료 기록 페이지가 대상 예약(상태·표시 필드)을 로드한다.
+   *  목록·PATCH 와 같은 정규 모델. 없으면 request 가 404 {detail} 한국어로 던진다. */
+  getAppointment: (id: number): Promise<Appointment> =>
+    request<Appointment>(`/appointments/${id}`),
+
+  /** 진료 기록 작성(FR-9, Story 3.1). 성공 시 생성된 기록(정규 모델)을 돌려주고, 같은 트랜잭션에서
+   *  그 예약이 확정→완료로 전이된다(FR-8, AD-5). 확정 아님(400)·기록 중복(409)·경합(409)은
+   *  request 가 4xx {detail} 한국어로 던진다. 처방(0..N)은 Story 3.2. */
+  createMedicalRecord: (payload: MedicalRecordCreate): Promise<MedicalRecord> =>
+    request<MedicalRecord>("/medical-records", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
 };

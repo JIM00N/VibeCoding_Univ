@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import Link from "next/link";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
@@ -24,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   Dialog,
@@ -55,6 +56,7 @@ import {
 import { api, type Appointment, type AppointmentStatus, type Doctor } from "@/lib/api";
 import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
 import { formatReservedAt } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 // 진료과: 진료과별 색 배지(항상 존재). 색은 hospital_department_id 로 결정적 매핑(category-color).
 function renderDepartment(appt: Appointment) {
@@ -231,7 +233,7 @@ export default function StaffAppointmentsPage() {
 
   const busy = pendingId !== null;
 
-  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경, 완료/취소 → 액션 없음.
+  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경+기록 작성, 완료/취소 → 액션 없음.
   function renderActions(appt: Appointment) {
     if (appt.status === "대기") {
       return (
@@ -257,6 +259,15 @@ export default function StaffAppointmentsPage() {
           <Button size="sm" variant="outline" onClick={() => openDoctorChange(appt)} disabled={busy}>
             의사 변경
           </Button>
+          {/* 진료 기록 작성(Story 3.1) — 확정 예약에만 진입(EXPERIENCE IA). 저장 시 완료 전이.
+              내비게이션이라 Link(새 탭·프리페치·SR 내비 시맨틱) — 버튼 스타일만 빌린다. */}
+          <Link
+            href={`/staff/appointments/${appt.id}/record`}
+            // cn(tailwind-merge) 필수 — base 의 border-transparent 가 outline 의 border-border 를 덮는 충돌 정리
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            기록 작성
+          </Link>
         </div>
       );
     }

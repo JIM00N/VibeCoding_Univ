@@ -80,6 +80,17 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
     return _to_appointment_out(row)
 
 
+def get_appointment(appointment_id: int) -> AppointmentOut:
+    """예약 1건을 정규 응답 모델로 돌려준다(Story 3.1 — 진료 기록 페이지의 대상 예약 로드).
+
+    없으면 404 한국어(기존 문구 재사용). db 는 기존 fetch_appointment 를 그대로 쓴다(add-only).
+    """
+    row = appointments_db.fetch_appointment(appointment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+    return _to_appointment_out(row)
+
+
 def list_appointments() -> list[AppointmentOut]:
     """전체 예약 목록을 정규 응답 모델로 돌려준다(FR-7, 직원 전체 접근).
 

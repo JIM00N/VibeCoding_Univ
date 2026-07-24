@@ -1,5 +1,23 @@
 # Deferred Work
 
+## Deferred from: code review of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
+
+- **fetch-or-404 블록 4-소스** — `fetch_appointment` + 404 "예약을 찾을 수 없어요." 패턴이 4곳(services/appointments.py의 set_appointment_status·set_appointment_doctor·get_appointment, services/medical_records.py) — 3.1이 만든 `get_appointment`(또는 `_fetch_appointment_or_404` 헬퍼)로 3곳 수렴 가능. 문구가 계약 테스트로 고정돼 있어 일괄 정리 스토리에서. [backend/app/services/appointments.py:88-90·121·157, backend/app/services/medical_records.py:35]
+- **CAS 409 문구 3-소스** — "예약 상태가 방금 바뀌었어요…" 60자 문구가 3개 raise 사이트에 중복. 모듈 상수(또는 공유 errors 모듈) 1줄로 수렴 가능. [backend/app/services/appointments.py:137·192, backend/app/services/medical_records.py:81]
+- **`ErrorState` 4번째 사본 — components 승격 임계 도달** — 동일 shell+`다시 시도` 구현이 4페이지에 바이트 중복(신규 NoticeState 는 `role="status"` 가 있는데 기존 3사본은 live-region 부재 — 이미 드리프트 시작). Epic 4 조회 페이지가 5번째를 만들기 전 `components/error-state.tsx` 추출 권장. [frontend/app/staff/appointments/[id]/record/page.tsx:242 외 3곳]
+- **naive→UTC 규약 인라인 2사본** — services/medical_records.py 인라인 정규화 ↔ slots.to_slot 내부(19-20)가 주석으로만 연결. Epic 4(날짜 필터)·5.3(walk-in visited_at) 전에 공유 `ensure_utc()` 또는 `UtcDatetime = Annotated[datetime, AfterValidator]` 로 경계 수렴 권장. [backend/app/services/medical_records.py:59, backend/app/slots.py:19-20]
+- **`_blank_str_to_none` 검증자 2사본** — patients ↔ medical_records 스키마에 동일 검증자 중복(3.2 처방 dosage 가 3번째 후보). 공유 함수/Annotated 타입으로 수렴 가능. [backend/app/schemas/medical_records.py:29, backend/app/schemas/patients.py:23]
+- **가드 pre-fetch 의 4-조인 폭** — `create_medical_record` 가드는 status·doctor_id 만 읽는데 표시용 4-조인 9컬럼 쿼리를 재사용(왕복 자체는 상태별 400 문구 계약상 필요). 최소 셀렉트 `fetch_appointment_status` 분리는 이 규모에선 저우선. [backend/app/services/medical_records.py:33]
+- **저장 성공 직후 이중 제출 창** — 기록 저장 성공 시 `finally`가 `submitting`을 풀고 `router.push` 완료 전까지 버튼이 잠깐 재활성. 재제출해도 서버 가드(완료 400·중복 409)가 막아 무해 — 성공 경로에서 submitting 유지(내비게이션까지)로 정리 가능. [frontend/app/staff/appointments/[id]/record/page.tsx:96-107]
+- **URL id 의 `Number()` 관용 파싱** — `/staff/appointments/0x1F/record` 같은 16진/지수 표기가 `Number()`로 유효 id 가 됨(서버 404 가 최종 방어라 무해). 엄격 파싱은 `/^\d+$/` 검사로. [frontend/app/staff/appointments/[id]/record/page.tsx:29-31]
+- **doctor-null CAS 경합의 409 문구** — `and doctor_id is not null` 로 걸린 0행도 "예약 상태가 방금 바뀌었어요"(상태 문구)로 안내됨. 의사 지정 변화 문구 분리는 도달 불가 경합의 문구 정밀화라 저우선. [backend/app/services/medical_records.py:79-84]
+- **record 페이지 죽은 `: null` 삼항 가지** — 로드 성공 시 `appt`가 항상 채워져 마지막 `: null` 가지는 도달 불가(방어적 타입 정직). 정리 시 조건 구조 단순화 가능. [frontend/app/staff/appointments/[id]/record/page.tsx:226]
+
+## Deferred from: Codex 사전 리뷰 of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
+
+- **`UniqueViolation` catch가 위반 제약 이름 미확인** — `create_medical_record`의 except 블록이 모든 유니크 위반을 "이미 진료 기록이 있는 예약"(409)으로 매핑. 현재 `medical_record`의 유니크 제약은 부분 유니크 `uq_medical_record_appointment` 하나뿐(PK 는 identity)이라 실질 오분류 경로 없음. 유니크 제약이 추가되거나 OVERRIDING 삽입으로 시퀀스가 뒤처질 수 있게 되면 `exc.diag.constraint_name` 확인으로 정밀화(단, 손제작 예외의 diag 는 None 이라 테스트 페이크 방식 함께 조정 필요). [backend/app/services/medical_records.py:62-68]
+- **계약 테스트가 실 CTE/제약/timestamptz 미실행** — `test_medical_records.py`가 db 계층을 monkeypatch 해 SQL 회귀를 못 잡는 것은 2-3 리뷰에서 기록된 계약 테스트 아키텍처의 본질적 한계와 동일. 3.1의 실 보증은 라이브 Supabase curl 실증(원자성·중복 409 롤백 포함, dev-story Debug Log)으로 수행됨. [backend/tests/test_medical_records.py]
+
 ## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
 
 - **의사↔진료과 검증 블록 2-소스** — `set_appointment_doctor`가 `create_appointment`(51-58)의 의사 존재·같은 과 검증(400 문구 2종 포함)을 바이트 중복. `_require_doctor_in_department(doctor_id, hd_id)` 추출로 해소. [backend/app/services/appointments.py:158-165]
