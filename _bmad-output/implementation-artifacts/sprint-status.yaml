@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-25 # Story 3.3 done · Epic 3 done · Epic 3 회고 done(부채 동결·신규 액션 2건)
+last_updated: 2026-07-25 # Story 3.3 done · Epic 3 done · Epic 3 회고 done · Epic 6 신설(correct-course 2026-07-25 — 역할 3분화·직원 셸)
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -84,6 +84,13 @@ development_status:
   5-2-의사-자동-배정: backlog
   5-3-walk-in-즉시-진료: backlog
   epic-5-retrospective: optional
+
+  # Epic 6: 역할 3분화 & 의사 대시보드 & 직원 셸 (P0.5 — 번호는 6이나 실행 순서는 Epic 4 done 후·Epic 5 전, correct-course 2026-07-25)
+  epic-6: backlog
+  6-1-3역할-진입-의사-대시보드: backlog
+  6-2-직원-좌측-사이드바-셸: backlog
+  6-3-직원-대리-예약: backlog
+  epic-6-retrospective: optional
 
 # Retrospective action items (Epic 1 회고 2026-07-19 · Epic 2 회고 2026-07-23)
 action_items:
