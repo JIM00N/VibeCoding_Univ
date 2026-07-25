@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-26 # Story 4.1 dev 완료 → review(pytest 102·lint·build·curl·브라우저 실측) · Epic 4 in-progress
+last_updated: 2026-07-26 # Story 4.1 코드리뷰 완료(Codex 클린·AC1~6 met·Patch 2 반영) → review 유지(배포 게이트 전) · Epic 4 in-progress
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system

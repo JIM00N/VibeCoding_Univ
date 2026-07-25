@@ -104,9 +104,11 @@ export default function PatientAppointmentsPage() {
               {items.map((a) => (
                 <li key={a.id}>
                   <Card className="gap-2 p-5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-base font-semibold">{a.department_name}</span>
-                      <AppointmentStatusBadge status={a.status} />
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-base font-semibold break-words">
+                        {a.department_name}
+                      </span>
+                      <AppointmentStatusBadge status={a.status} className="shrink-0" />
                     </div>
                     <dl className="grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
                       <dt className="text-muted-foreground">예약 시각</dt>

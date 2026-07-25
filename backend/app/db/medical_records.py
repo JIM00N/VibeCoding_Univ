@@ -182,7 +182,7 @@ _SELECT_RECORDS_BY_PATIENT = """
     join public.department d            on d.id  = hd.department_id
     join public.doctor doc              on doc.id = mr.doctor_id
     where mr.patient_id = %s
-    order by mr.visited_at desc
+    order by mr.visited_at desc, mr.id desc
 """
 
 

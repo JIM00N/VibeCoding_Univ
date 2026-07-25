@@ -70,7 +70,7 @@ _SELECT_APPOINTMENTS_BY_PATIENT = """
     join public.department d            on d.id  = hd.department_id
     left join public.doctor doc         on doc.id = a.doctor_id
     where a.patient_id = %s
-    order by a.reserved_at desc
+    order by a.reserved_at desc, a.id desc
 """
 
 # 예약 단건 조회(상태 전이 전 현재 status·존재 확인용). 없으면 fetchone() 이 None → 서비스가 404.
