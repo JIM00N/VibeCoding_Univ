@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-25 # Story 3.3 done (커밋+배포+라이브) · Epic 3 done
+last_updated: 2026-07-25 # Story 3.3 done · Epic 3 done · Epic 3 회고 done(부채 동결·신규 액션 2건)
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -70,7 +70,7 @@ development_status:
   3-1-확정-예약에-진료-기록-작성-완료-전이: done
   3-2-진료-기록에-처방-추가: done
   3-3-처방전-조회-출력: done # 스코프 추가 2026-07-24 — 착수 게이트 3.2 done · 2026-07-25 커밋+배포(PR#13→6efd83f)+라이브 print 실측 = done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done # 2026-07-25 회고 완료 (epic-3-retro-2026-07-25.md)
 
   # Epic 4: 조회 (P0 한 줄기 완성)
   epic-4: backlog
@@ -110,7 +110,7 @@ action_items:
   - epic: 1
     action: "deferred-work 13건을 처리 시점(Epic)별로 태깅"
     owner: "지석"
-    status: open # Epic 2 회고 액션 #2로 승계 (~30건으로 증가)
+    status: done # Epic 2 #2로 승계 → 2026-07-25 Epic 3 회고서 동결 종료(의도된 P0 데모 부채 수용)
   - epic: 2
     action: "Epic 3 착수 전 테스트 데이터 정리 — 테스트 환자 12명 + Epic 2 테스트 예약 (시드 truncate 가드 유의)"
     owner: "지석"
@@ -118,11 +118,11 @@ action_items:
   - epic: 2
     action: "deferred-work ~30건 처리 시점(Epic)별 태깅 (Epic 1 액션 #6 승계)"
     owner: "지석"
-    status: open
+    status: done # 2026-07-25 Epic 3 회고 동결 결정 — 의도된 P0 데모 부채로 명시 수용, '태깅' 반복 나열 종료. 중복 사본 제거는 P0 관통 후 정리 스토리(Epic 3 액션 #3)로 승계
   - epic: 2
     action: "환경 셋업 문서화 — .env 생성 절차 + aws-1 Session 풀러 사유(IPv6 전용 직접 호스트)"
     owner: "지석(개발)"
-    status: open
+    status: done # 2026-07-25 Epic 3 회고: 미이행이나 Epic 3 액션 #2로 승계(중복 나열 방지)
   - epic: 2
     action: "3.1 create-story의 Dev Notes에 트랜잭션 합성 방식(단일 db 함수·한 커넥션·한 tx) 명시"
     owner: "개발(create-story)"
@@ -130,4 +130,12 @@ action_items:
   - epic: 2
     action: "모바일 뷰포트 실측 방법 확보 — Playwright viewport 지정으로 카드 분기 시각 검증"
     owner: "개발"
+    status: done # 2026-07-25 Epic 3 회고: 3.1 Playwright 390×844 최초 실측·3.2 390/1280 실측으로 완수
+  - epic: 3
+    action: "환경 셋업 문서화 — .env 생성 절차 + aws-1 Session 풀러 사유(IPv6 전용 직접 호스트) 1페이지 (Epic 2 #3 승계, 저비용·통증 0)"
+    owner: "지석(개발)"
+    status: open
+  - epic: 3
+    action: "P0 관통(Epic 4 done) 후 중복 사본 정리 스토리 — fetch-or-404 4사본·CAS 409 문구 3사본·ensure_utc 공유 헬퍼·ErrorState 4곳 이관 (정식 스토리 Task로 내장, 회고 교훈 2 적용)"
+    owner: "지석"
     status: open
