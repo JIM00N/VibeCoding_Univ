@@ -94,3 +94,35 @@ def test_get_doctors_empty(monkeypatch):
     resp = client.get("/doctors", params={"hospital_department_id": 99})
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# ── GET /drugs (약 목록, Story 3.2) ──────────────────────────────────────────
+# fetch_drugs 를 가짜로 바꿔 라우터→서비스→DrugOut 매핑만 검증한다(departments 미러).
+
+
+def test_get_drugs_returns_flat_shape(monkeypatch):
+    # drug 테이블 실측 모양: id 정수 + name 문자열 + unit(문자열 또는 null, FR 미사용 선택 필드).
+    fake_rows = [
+        {"id": 1, "name": "타이레놀정 500mg", "unit": "정"},
+        {"id": 2, "name": "아목시실린캡슐 250mg", "unit": "캡슐"},
+        {"id": 3, "name": "세티리진정 10mg", "unit": None},
+    ]
+    monkeypatch.setattr(refdata_db, "fetch_drugs", lambda: fake_rows)
+
+    client = TestClient(app)
+    resp = client.get("/drugs")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == fake_rows
+    # AD-10: flat 모양 — id 는 정수, name 은 문자열. nested 객체 금지, 키셋 고정.
+    assert all(isinstance(d["id"], int) and isinstance(d["name"], str) for d in data)
+    assert all(set(d.keys()) == {"id", "name", "unit"} for d in data)
+
+
+def test_get_drugs_empty(monkeypatch):
+    monkeypatch.setattr(refdata_db, "fetch_drugs", lambda: [])
+    client = TestClient(app)
+    resp = client.get("/drugs")
+    assert resp.status_code == 200
+    assert resp.json() == []

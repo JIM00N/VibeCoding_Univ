@@ -26,6 +26,17 @@ def fetch_departments() -> list[dict[str, Any]]:
             return cur.fetchall()
 
 
+# 약 목록 (Story 3.2, FR-10). drug 는 최상위 참조 테이블 — 조인 불필요(departments 쪽 미러).
+_SELECT_DRUGS = "select id, name, unit from public.drug order by id"
+
+
+def fetch_drugs() -> list[dict[str, Any]]:
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_DRUGS)
+            return cur.fetchall()
+
+
 # 의사 목록 (Story 2.1, FR-6). doctor ⋈ hospital_department ⋈ department 로 소속·표시 필드를 싣는다.
 # hospital_department_id 는 doctor 의 소속(FK) — 예약이 이 값을 진료과와 대조한다.
 # 예약 화면은 진료과 선택 후 ?hospital_department_id= 로 그 과 의사만 받는다(없으면 전체, 단일 병원).

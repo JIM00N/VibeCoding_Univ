@@ -63,8 +63,28 @@ export type AppointmentCreate = {
   reserved_at: string;
 };
 
+// 약 정규 응답 모델(Story 3.2). 시드 전용 참조 데이터(FR-13) — unit 은 표시에 쓰지 않는 선택 필드.
+export type Drug = { id: number; name: string; unit: string | null };
+
+// 처방 정규 응답 모델(Story 3.2). flat — drug 객체 중첩 금지(AD-10). drug_name 은 서버 조인 표시 필드.
+export type Prescription = {
+  id: number;
+  drug_id: number;
+  drug_name: string;
+  dosage: string | null;
+  days: number | null;
+};
+
+// 처방 행 요청(FR-10, Story 3.2). 약만 필수 — 용법·일수는 비우면 null 전송(days ≥ 1 은 서버 400).
+export type PrescriptionCreate = {
+  drug_id: number;
+  dosage?: string | null;
+  days?: number | null;
+};
+
 // 진료 기록 정규 응답 모델(AD-10, Story 3.1). patient_id·hospital_department_id·doctor_id 는
 // 작성 시점 예약 값의 스냅샷 복사(AD-6, 이력 불변). appointment_id 는 walk-in(5.3)에서만 null.
+// prescriptions 는 기록에 합성된 처방 0..N(Story 3.2) — 각 항목은 flat(위 Prescription).
 export type MedicalRecord = {
   id: number;
   appointment_id: number | null;
@@ -77,15 +97,18 @@ export type MedicalRecord = {
   patient_name: string;
   doctor_name: string;
   department_name: string;
+  prescriptions: Prescription[];
 };
 
 // 진료 기록 작성 요청(FR-9, Story 3.1). 스냅샷 3필드는 보내지 않는다 — 서버 SQL 이 예약 행에서
-// 복사하고, 동봉하면 extra=forbid 로 422. visited_at 은 ISO-8601 UTC. 처방(0..N)은 Story 3.2.
+// 복사하고, 동봉하면 extra=forbid 로 422. visited_at 은 ISO-8601 UTC.
+// prescriptions 는 처방 0..N(FR-10, Story 3.2) — 기록과 같은 트랜잭션에서 함께 저장된다.
 export type MedicalRecordCreate = {
   appointment_id: number;
   diagnosis: string;
   notes?: string | null;
   visited_at: string;
+  prescriptions: PrescriptionCreate[];
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -163,6 +186,13 @@ export const api = {
     return Array.isArray(data) ? data : [];
   },
 
+  /** 약 목록(FR-10, Story 3.2). 진료 기록 폼의 처방 행 약 드롭다운을 채운다(시드 전용 참조 데이터). */
+  getDrugs: async (): Promise<Drug[]> => {
+    const data = await request<Drug[]>("/drugs");
+    // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
   /** 예약 생성(FR-6, P0). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다.
    *  오류는 request 가 4xx {detail} 한국어로 던진다(AD-10). 슬롯 충돌 검사는 Epic 5. */
   createAppointment: (payload: AppointmentCreate): Promise<Appointment> =>
@@ -205,8 +235,8 @@ export const api = {
     request<Appointment>(`/appointments/${id}`),
 
   /** 진료 기록 작성(FR-9, Story 3.1). 성공 시 생성된 기록(정규 모델)을 돌려주고, 같은 트랜잭션에서
-   *  그 예약이 확정→완료로 전이된다(FR-8, AD-5). 확정 아님(400)·기록 중복(409)·경합(409)은
-   *  request 가 4xx {detail} 한국어로 던진다. 처방(0..N)은 Story 3.2. */
+   *  그 예약이 확정→완료로 전이되며 처방 0..N(FR-10, Story 3.2)도 함께 생성된다(all-or-nothing).
+   *  확정 아님(400)·기록 중복(409)·경합(409)·없는 약(400)은 request 가 4xx {detail} 한국어로 던진다. */
   createMedicalRecord: (payload: MedicalRecordCreate): Promise<MedicalRecord> =>
     request<MedicalRecord>("/medical-records", {
       method: "POST",

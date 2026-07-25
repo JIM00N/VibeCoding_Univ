@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.schemas.refdata import DepartmentOut, DoctorOut
+from app.schemas.refdata import DepartmentOut, DoctorOut, DrugOut
 from app.services import refdata as refdata_service
 
 router = APIRouter(tags=["refdata"])
@@ -13,6 +13,12 @@ router = APIRouter(tags=["refdata"])
 def get_departments() -> list[DepartmentOut]:
     """단일 병원의 진료과 목록. 첫 화면이 이 엔드포인트로 수직 슬라이스를 관통한다(AC6)."""
     return refdata_service.list_departments()
+
+
+@router.get("/drugs", response_model=list[DrugOut])
+def get_drugs() -> list[DrugOut]:
+    """약 목록(Story 3.2, FR-10). 진료 기록 폼의 처방 행 약 드롭다운을 채운다(시드 전용)."""
+    return refdata_service.list_drugs()
 
 
 @router.get("/doctors", response_model=list[DoctorOut])

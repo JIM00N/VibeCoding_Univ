@@ -53,6 +53,7 @@ def _fake_record_row(**over):
         "patient_name": "이수민",
         "doctor_name": "김민재",
         "department_name": "이비인후과",
+        "prescriptions": [],
     }
     row.update(over)
     return row
@@ -83,7 +84,7 @@ def test_create_record_returns_201_canonical_shape(monkeypatch):
     captured: dict = {}
 
     # 시그니처 자체가 계약: 스냅샷 3필드(patient/hd/doctor)는 인자에 없다 — SQL 이 예약 행에서 복사(AC3).
-    def fake_insert(appointment_id, visited_at, diagnosis, notes):
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
         captured["args"] = (appointment_id, visited_at, diagnosis, notes)
         return _fake_record_row(
             appointment_id=appointment_id, visited_at=visited_at,
@@ -112,6 +113,7 @@ def test_create_record_returns_201_canonical_shape(monkeypatch):
         "patient_name",
         "doctor_name",
         "department_name",
+        "prescriptions",
     }
     assert captured["args"] == (
         10,
@@ -136,7 +138,7 @@ def test_create_record_without_notes_passes_none(monkeypatch):
     )
     captured: dict = {}
 
-    def fake_insert(appointment_id, visited_at, diagnosis, notes):
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
         captured["notes"] = notes
         return _fake_record_row(appointment_id=appointment_id, notes=notes)
 
@@ -161,7 +163,7 @@ def test_create_record_blank_notes_normalized_to_none(monkeypatch):
     )
     captured: dict = {}
 
-    def fake_insert(appointment_id, visited_at, diagnosis, notes):
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
         captured["notes"] = notes
         return _fake_record_row(appointment_id=appointment_id, notes=notes)
 
@@ -183,7 +185,7 @@ def test_create_record_naive_visited_at_normalized_to_utc(monkeypatch):
     )
     captured: dict = {}
 
-    def fake_insert(appointment_id, visited_at, diagnosis, notes):
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
         captured["visited_at"] = visited_at
         return _fake_record_row(appointment_id=appointment_id, visited_at=visited_at)
 
@@ -369,3 +371,215 @@ def test_create_record_rejects_snapshot_field_injection(monkeypatch):
     for field in ("patient_id", "hospital_department_id", "doctor_id"):
         resp = client.post("/medical-records", json=_payload(**{field: 99}))
         assert resp.status_code == 422, f"{field} 주입은 422 여야 합니다"
+
+
+# ── 처방 0..N (Story 3.2, AC2~AC4) ───────────────────────────────────
+
+
+def test_create_record_with_prescriptions_returns_flat_list(monkeypatch):
+    # 처방 2행 성공 — 서비스는 dict 리스트를 db 함수에 그대로 전달하고(단일 CTE 문이 한 번에 쓴다),
+    # 응답 prescriptions 는 flat 키셋(id·drug_id·drug_name·dosage·days) 고정(AD-10, drug 객체 중첩 금지).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    captured: dict = {}
+
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
+        captured["prescriptions"] = prescriptions
+        return _fake_record_row(
+            prescriptions=[
+                {"id": 1, "drug_id": 2, "drug_name": "아목시실린캡슐 250mg",
+                 "dosage": "1일 3회 식후", "days": 3},
+                {"id": 2, "drug_id": 3, "drug_name": "이부프로펜정 200mg",
+                 "dosage": None, "days": None},
+            ]
+        )
+
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", fake_insert
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(
+            prescriptions=[
+                {"drug_id": 2, "dosage": "1일 3회 식후", "days": 3},
+                {"drug_id": 3},
+            ]
+        ),
+    )
+
+    assert resp.status_code == 201
+    # db 인자 계약: dict 리스트 그대로(생략 필드는 None 채움) — 스냅샷 3필드는 여전히 인자에 없다.
+    assert captured["prescriptions"] == [
+        {"drug_id": 2, "dosage": "1일 3회 식후", "days": 3},
+        {"drug_id": 3, "dosage": None, "days": None},
+    ]
+    data = resp.json()
+    assert len(data["prescriptions"]) == 2
+    assert all(
+        set(p.keys()) == {"id", "drug_id", "drug_name", "dosage", "days"}
+        for p in data["prescriptions"]
+    )
+    assert data["prescriptions"][0]["drug_name"] == "아목시실린캡슐 250mg"
+    assert data["prescriptions"][1]["dosage"] is None
+
+
+def test_create_record_without_prescriptions_passes_empty_list(monkeypatch):
+    # AC3: prescriptions 생략 → db 에 [] 전달, 응답 [] (3.1 동작 그대로).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    captured: dict = {}
+
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
+        captured["prescriptions"] = prescriptions
+        return _fake_record_row()
+
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", fake_insert
+    )
+
+    client = TestClient(app)
+    resp = client.post("/medical-records", json=_payload())
+
+    assert resp.status_code == 201
+    assert captured["prescriptions"] == []
+    assert resp.json()["prescriptions"] == []
+
+
+def test_create_record_blank_dosage_normalized_to_none(monkeypatch):
+    # 행 dosage 빈 문자열/공백 → None 정규화(notes 와 같은 검증자 공유 — 빈 문자열 저장 방지).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    captured: dict = {}
+
+    def fake_insert(appointment_id, visited_at, diagnosis, notes, prescriptions):
+        captured["prescriptions"] = prescriptions
+        return _fake_record_row()
+
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", fake_insert
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "dosage": "   "}]),
+    )
+
+    assert resp.status_code == 201
+    assert captured["prescriptions"][0]["dosage"] is None
+
+
+def test_create_record_days_below_one_rejected(monkeypatch):
+    # ④' 일수 가드 — DB days 엔 CHECK 없음, 앱이 규칙 소유(400 한국어, 쓰기 미호출).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "days": 0}]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "처방 일수는 1 이상의 숫자로 입력해 주세요."
+
+
+def test_create_record_days_over_int4_max_rejected(monkeypatch):
+    # ④' 상한 — days 가 int4 max(2,147,483,647)를 넘으면 CTE 캐스트 overflow(500) 전에 400 으로 막는다.
+    # 프런트 정수 검증은 상한이 없어(자릿수 무제한) 이 값이 서버까지 도달할 수 있다(리뷰 지적).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "days": 2_147_483_648}]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "처방 일수는 1 이상의 숫자로 입력해 주세요."
+
+
+def test_create_record_non_numeric_days_returns_422(monkeypatch):
+    # days 는 int — 숫자 아닌 값은 Pydantic 이 422 로 거부(쓰기 미호출).
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "days": "삼일"}]),
+    )
+
+    assert resp.status_code == 422
+
+
+def test_create_record_prescription_missing_drug_id_returns_422(monkeypatch):
+    # 행의 약은 유일한 필수 필드 — drug_id 누락은 422.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"dosage": "1일 3회", "days": 3}]),
+    )
+
+    assert resp.status_code == 422
+
+
+def test_create_record_prescription_extra_field_returns_422(monkeypatch):
+    # 행 여분 필드(drug_name 등 서버 표시 필드) 주입은 extra=forbid 로 422 — 스냅샷 주입 거부 미러.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "drug_name": "타이레놀정 500mg"}]),
+    )
+
+    assert resp.status_code == 422
+
+
+def test_create_record_unknown_drug_returns_400(monkeypatch):
+    # ⑤' FK 위반(없는 drug_id) → 400 한국어. 단일 문장이라 기록·완료 전이·다른 처방도 함께 롤백된다.
+    from psycopg.errors import ForeignKeyViolation
+
+    def raise_fk(*args, **kwargs):
+        raise ForeignKeyViolation()
+
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", raise_fk
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 999}]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "선택한 약을 찾을 수 없어요. 약을 다시 선택해 주세요."

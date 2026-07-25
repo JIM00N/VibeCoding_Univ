@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 from app.db import refdata as refdata_db
-from app.schemas.refdata import DepartmentOut, DoctorOut
+from app.schemas.refdata import DepartmentOut, DoctorOut, DrugOut
 
 
 def list_departments() -> list[DepartmentOut]:
     """단일 병원의 진료과 목록을 정규 응답 모델로 돌려준다."""
     rows = refdata_db.fetch_departments()
     return [DepartmentOut(id=row["id"], name=row["name"]) for row in rows]
+
+
+def list_drugs() -> list[DrugOut]:
+    """약 목록을 정규 응답 모델로 돌려준다(Story 3.2 처방 드롭다운)."""
+    rows = refdata_db.fetch_drugs()
+    return [DrugOut(id=row["id"], name=row["name"], unit=row["unit"]) for row in rows]
 
 
 def list_doctors(hospital_department_id: int | None) -> list[DoctorOut]:

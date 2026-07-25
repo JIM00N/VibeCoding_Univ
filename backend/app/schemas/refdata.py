@@ -14,6 +14,17 @@ class DepartmentOut(BaseModel):
     name: str
 
 
+class DrugOut(BaseModel):
+    """약(Story 3.2 처방 드롭다운용). 시드 전용 참조 데이터(FR-13) — 관리 화면 없음.
+
+    unit 은 FR 미사용 선택 필드(정·캡슐 등) — 표시엔 name 만 쓴다. flat 모양(AD-10).
+    """
+
+    id: int
+    name: str
+    unit: str | None = None
+
+
 class DoctorOut(BaseModel):
     """의사(Story 2.1 예약 슬롯 피커용). id = doctor.id(정수),
     hospital_department_id = 소속 진료과(FK, 예약이 이 값과 대조), department_name = 표시 필드.
