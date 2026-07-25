@@ -24,12 +24,14 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
 
 
 @router.get("/appointments", response_model=list[AppointmentOut])
-def list_appointments() -> list[AppointmentOut]:
-    """직원 예약 목록(FR-7). 전체 예약을 정규 모델 리스트로 반환(최신순).
+def list_appointments(patient_id: int | None = None) -> list[AppointmentOut]:
+    """예약 목록(정규 모델 리스트).
 
-    직원 전체 접근이라 patient_id 스코핑 없음(환자용 조회는 Epic 4). 슬롯 충돌/점유는 Epic 5.
+    - patient_id 없음: 직원 전체 목록(FR-7, 최신순) — 기존 계약 그대로(회귀 없음).
+    - ?patient_id=: 그 환자의 예약만(Story 4.1, FR-11·AD-8, reserved_at desc). 앱 레벨 필터·보안 아님.
+    슬롯 충돌/점유는 Epic 5.
     """
-    return appointments_service.list_appointments()
+    return appointments_service.list_appointments(patient_id)
 
 
 @router.get("/appointments/{appointment_id}", response_model=AppointmentOut)

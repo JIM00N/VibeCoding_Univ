@@ -204,10 +204,19 @@ export const api = {
     }),
 
   /** 직원 예약 목록(FR-7). 전체 예약을 정규 모델 리스트로 받는다(직원 전체 접근).
-   *  환자용 스코핑 조회(?patient_id=)는 Epic 4 — 여기서 필터를 붙이지 않는다. */
+   *  환자용 스코핑 조회(?patient_id=)는 getAppointmentsByPatient(Story 4.1). */
   getAppointments: async (): Promise<Appointment[]> => {
     const data = await request<Appointment[]>("/appointments");
     // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 환자용 예약 목록(Story 4.1, FR-11·AD-8). ?patient_id= 로 그 환자의 예약만 받는다(최근순).
+   *  앱 레벨 필터일 뿐 보안 격리가 아니다(AD-8). 없으면 빈 배열(404 아님 — 목록 계약). */
+  getAppointmentsByPatient: async (patientId: number): Promise<Appointment[]> => {
+    const data = await request<Appointment[]>(
+      `/appointments?patient_id=${encodeURIComponent(String(patientId))}`,
+    );
     return Array.isArray(data) ? data : [];
   },
 
@@ -252,6 +261,15 @@ export const api = {
       `/medical-records?appointment_id=${encodeURIComponent(String(appointmentId))}`,
     );
     // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 환자용 진료 기록 조회(Story 4.1, FR-11·AD-8). ?patient_id= 로 그 환자의 지난 기록·처방을
+   *  정규 모델 리스트(처방 nested 포함)로 받는다(최근순). 없으면 빈 배열(404 아님 — 목록 계약). */
+  getMedicalRecordsByPatient: async (patientId: number): Promise<MedicalRecord[]> => {
+    const data = await request<MedicalRecord[]>(
+      `/medical-records?patient_id=${encodeURIComponent(String(patientId))}`,
+    );
     return Array.isArray(data) ? data : [];
   },
 

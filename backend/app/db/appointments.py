@@ -55,6 +55,24 @@ _SELECT_APPOINTMENTS = """
     order by a.id desc
 """
 
+# 환자용 예약 목록(Story 4.1, FR-11·AD-8) — _SELECT_APPOINTMENTS 의 표시 조인을 그대로 미러하고
+# `where a.patient_id = %s` 로 그 환자만 필터한다(앱 레벨 필터, 보안 아님 — 데모 고지). 정렬은
+# reserved_at desc = 최근 예약이 위(환자 관점 시간순 가독성; 직원 목록의 id desc 와 의도적으로 다름).
+# 표시 조인 SQL 사본 규약: 기존 4사본과 같은 의도적 컨벤션 — 공유 fragment 추출은 deferred(지금 안 함).
+_SELECT_APPOINTMENTS_BY_PATIENT = """
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from public.appointment a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+    where a.patient_id = %s
+    order by a.reserved_at desc, a.id desc
+"""
+
 # 예약 단건 조회(상태 전이 전 현재 status·존재 확인용). 없으면 fetchone() 이 None → 서비스가 404.
 _SELECT_APPOINTMENT_BY_ID = """
     select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
@@ -154,6 +172,18 @@ def fetch_appointments() -> list[dict[str, Any]]:
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(_SELECT_APPOINTMENTS)
+            return cur.fetchall()
+
+
+def fetch_appointments_by_patient(patient_id: int) -> list[dict[str, Any]]:
+    """한 환자의 예약 목록(dict 리스트)을 반환한다 — 환자용 조회(Story 4.1, FR-11·AD-8).
+
+    필터드 목록이라 없으면 빈 리스트다(404 아님 — 목록 계약). 최근 예약순(reserved_at desc).
+    파라미터화 SQL(injection 방지) — patient_id 는 %s 바인딩.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_APPOINTMENTS_BY_PATIENT, (patient_id,))
             return cur.fetchall()
 
 

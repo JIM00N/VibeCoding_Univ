@@ -119,12 +119,23 @@ def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
     return _to_medical_record_out(row)
 
 
-def list_medical_records(appointment_id: int) -> list[MedicalRecordOut]:
-    """예약의 진료 기록·처방을 정규 모델 리스트(0..1행)로 조회한다(Story 3.3, AC2).
+def list_medical_records(
+    appointment_id: int | None = None, patient_id: int | None = None
+) -> list[MedicalRecordOut]:
+    """진료 기록·처방을 정규 모델 리스트로 조회한다. 필터 하나를 골라 분기한다.
 
-    필터드 목록이라 없으면 빈 리스트(404 아님 — 목록 계약 미러). "기록 없음" 해석은 프런트 몫.
+    - patient_id 있음: 그 환자의 지난 기록 전체 — 환자용 조회(Story 4.1, FR-11·AD-8, visited_at desc).
+    - appointment_id 있음: 그 예약의 기록(0..1행) — 직원 처방전 경로(Story 3.3, AC2).
+    - 둘 다 없음: 400 한국어(조회 조건 필수 — 3.3 의 "누락 422" 를 이 스토리가 400 계약으로 개정).
+    필터드 목록이라 결과가 없으면 빈 리스트(404 아님 — 목록 계약 미러). "기록 없음" 해석은 프런트 몫.
+    매핑은 어느 경로든 같은 _to_medical_record_out(리소스당 정규 모델 하나·처방 nested 재사용, AD-10).
     """
-    rows = medical_records_db.fetch_medical_records_by_appointment(appointment_id)
+    if patient_id is not None:
+        rows = medical_records_db.fetch_medical_records_by_patient(patient_id)
+    elif appointment_id is not None:
+        rows = medical_records_db.fetch_medical_records_by_appointment(appointment_id)
+    else:
+        raise HTTPException(status_code=400, detail="조회 조건이 필요해요.")
     return [_to_medical_record_out(row) for row in rows]
 
 

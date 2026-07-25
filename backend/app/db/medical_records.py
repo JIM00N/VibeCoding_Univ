@@ -157,6 +157,34 @@ _SELECT_RECORD_BY_ID = """
     where mr.id = %s
 """
 
+# 환자용 진료 기록 조회(Story 4.1, FR-11·AD-8) — 위 두 사본과 같은 표시 조인 + 처방 jsonb 집계를
+# 그대로 미러하고 `where mr.patient_id = %s` 로 그 환자만 필터한다(앱 레벨 필터·보안 아님). 정렬은
+# visited_at desc = 최근 진료가 위(환자가 최신 진료 이력을 먼저 본다). 처방은 SQL 한 방으로 nested
+# 합성(Python N+1 금지) — 3.3 이 정한 정규 MedicalRecordOut 모양을 그대로 재사용한다(새 모델 없음).
+_SELECT_RECORDS_BY_PATIENT = """
+    select mr.id, mr.appointment_id, mr.patient_id, mr.hospital_department_id,
+           mr.doctor_id, mr.visited_at, mr.diagnosis, mr.notes,
+           mr.prescription_printed_at,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name,
+           coalesce(
+               (select jsonb_agg(jsonb_build_object(
+                    'id', pr.id, 'drug_id', pr.drug_id, 'drug_name', dr.name,
+                    'dosage', pr.dosage, 'days', pr.days) order by pr.id)
+                from public.prescription pr
+                join public.drug dr on dr.id = pr.drug_id
+                where pr.medical_record_id = mr.id),
+               '[]'::jsonb) as prescriptions
+    from public.medical_record mr
+    join public.patient p               on p.id  = mr.patient_id
+    join public.hospital_department hd  on hd.id = mr.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    join public.doctor doc              on doc.id = mr.doctor_id
+    where mr.patient_id = %s
+    order by mr.visited_at desc, mr.id desc
+"""
+
 
 def fetch_medical_records_by_appointment(appointment_id: int) -> list[dict[str, Any]]:
     """예약에 속한 진료 기록·처방을 정규 응답 투영으로 반환(0..1행 — 예약당 기록 1건, AC4).
@@ -176,6 +204,18 @@ def fetch_medical_record(record_id: int) -> dict[str, Any] | None:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(_SELECT_RECORD_BY_ID, (record_id,))
             return cur.fetchone()
+
+
+def fetch_medical_records_by_patient(patient_id: int) -> list[dict[str, Any]]:
+    """한 환자의 진료 기록·처방을 정규 응답 투영 리스트로 반환한다(Story 4.1, FR-11·AD-8).
+
+    필터드 목록이라 없으면 빈 리스트다(404 아님 — 목록 계약 미러). 최근 진료순(visited_at desc).
+    파라미터화 SQL(injection 방지). 처방 jsonb 집계는 psycopg 가 list[dict] 로 파싱해 준다.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_RECORDS_BY_PATIENT, (patient_id,))
+            return cur.fetchall()
 
 
 # ── 처방전 출력 도장 (Story 3.3, AC3·AC4) ──────────────────────────────────

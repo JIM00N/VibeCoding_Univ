@@ -91,12 +91,17 @@ def get_appointment(appointment_id: int) -> AppointmentOut:
     return _to_appointment_out(row)
 
 
-def list_appointments() -> list[AppointmentOut]:
-    """전체 예약 목록을 정규 응답 모델로 돌려준다(FR-7, 직원 전체 접근).
+def list_appointments(patient_id: int | None = None) -> list[AppointmentOut]:
+    """예약 목록을 정규 응답 모델로 돌려준다.
 
-    patient_id 스코핑(AD-8)은 환자용 조회 규약이라 여기 해당 없음 — 직원은 전체를 본다(Epic 4는 별개).
+    - patient_id 없음(기본): 전체 예약 — 직원 전체 접근(FR-7, 회귀 없음).
+    - patient_id 있음: 그 환자의 예약만 — 환자용 조회(Story 4.1, FR-11·AD-8, 앱 레벨 필터·보안 아님).
+    매핑은 어느 경로든 같은 _to_appointment_out(리소스당 정규 모델 하나, AD-10).
     """
-    rows = appointments_db.fetch_appointments()
+    if patient_id is not None:
+        rows = appointments_db.fetch_appointments_by_patient(patient_id)
+    else:
+        rows = appointments_db.fetch_appointments()
     return [_to_appointment_out(row) for row in rows]
 
 
