@@ -173,9 +173,15 @@ export default function MedicalRecordNewPage() {
         })),
       });
       toast.success("진료 기록을 저장했어요.");
-      // 목록으로 복귀 — 목록이 서버에서 재조회되며 해당 예약 배지가 완료(green)로 표시된다.
-      // 성공 시 submitting 을 풀지 않는다 — 내비게이션까지 비활성 유지(이중 제출 창 제거, deferred 이행).
-      router.push("/staff/appointments");
+      // 처방 ≥1건이면 처방전 화면으로 직행(진료→즉시 출력→교부 흐름, Story 3.3 — 3.2 "목록 복귀"의
+      // 의도적 개정). 완료 배지 확인은 처방전 화면의 상태 배지가 대신한다(목록을 안 거치므로).
+      // 처방 0건이면 기존대로 목록 복귀 — 목록이 재조회되며 해당 예약 배지가 완료로 표시된다.
+      // 두 경로 모두 성공 시 submitting 을 풀지 않는다 — 내비게이션까지 비활성 유지(이중 제출 창 제거).
+      if (checked.length > 0) {
+        router.push(`/staff/appointments/${appt.id}/prescription`);
+      } else {
+        router.push("/staff/appointments");
+      }
     } catch (err) {
       // 확정 아님(400)·기록 중복(409)·경합(409)·없는 약(400) 등은 request 가 4xx 한국어로 던진다(AD-10).
       const message = err instanceof Error ? err.message : "요청을 처리하지 못했어요.";

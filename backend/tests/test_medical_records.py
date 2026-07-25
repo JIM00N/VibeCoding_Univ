@@ -53,6 +53,8 @@ def _fake_record_row(**over):
         "patient_name": "이수민",
         "doctor_name": "김민재",
         "department_name": "이비인후과",
+        # Story 3.3: 출력 이력 컬럼 — 생성 직후 null, print 후 시각. 모든 medical-records 응답이 같은 모양(AD-10).
+        "prescription_printed_at": None,
         "prescriptions": [],
     }
     row.update(over)
@@ -113,6 +115,7 @@ def test_create_record_returns_201_canonical_shape(monkeypatch):
         "patient_name",
         "doctor_name",
         "department_name",
+        "prescription_printed_at",
         "prescriptions",
     }
     assert captured["args"] == (
@@ -583,3 +586,195 @@ def test_create_record_unknown_drug_returns_400(monkeypatch):
 
     assert resp.status_code == 400
     assert resp.json()["detail"] == "선택한 약을 찾을 수 없어요. 약을 다시 선택해 주세요."
+
+
+# ── 생성 응답에 출력 이력 필드 포함 (Story 3.3, AC4 — 모든 엔드포인트 같은 모양) ──
+
+
+def test_create_record_response_includes_printed_at_null(monkeypatch):
+    # AD-10: 생성 직후에도 prescription_printed_at 키가 응답에 있고 null 이다(모든 엔드포인트 동일 모양).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    monkeypatch.setattr(
+        medical_records_db,
+        "insert_medical_record_and_complete",
+        lambda *a, **k: _fake_record_row(),
+    )
+
+    client = TestClient(app)
+    resp = client.post("/medical-records", json=_payload())
+
+    assert resp.status_code == 201
+    assert resp.json()["prescription_printed_at"] is None
+
+
+# ── GET /medical-records?appointment_id= (Story 3.3, AC2·AC5) ────────
+
+
+def test_list_records_returns_200_flat_list(monkeypatch):
+    # 완료 예약의 기록·처방을 정규 모델 리스트(0..1행)로 반환 — 키셋에 prescription_printed_at 포함.
+    captured: dict = {}
+
+    def fake_fetch(appointment_id):
+        captured["appointment_id"] = appointment_id
+        return [
+            _fake_record_row(
+                appointment_id=appointment_id,
+                prescriptions=[
+                    {"id": 1, "drug_id": 2, "drug_name": "아목시실린캡슐 250mg",
+                     "dosage": "1일 3회 식후", "days": 3},
+                ],
+            )
+        ]
+
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_appointment", fake_fetch
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"appointment_id": 10})
+
+    assert resp.status_code == 200
+    assert captured["appointment_id"] == 10
+    data = resp.json()
+    assert isinstance(data, list) and len(data) == 1
+    assert set(data[0].keys()) == {
+        "id", "appointment_id", "patient_id", "hospital_department_id",
+        "doctor_id", "visited_at", "diagnosis", "notes",
+        "patient_name", "doctor_name", "department_name",
+        "prescription_printed_at", "prescriptions",
+    }
+    assert data[0]["prescription_printed_at"] is None
+    assert data[0]["prescriptions"][0]["drug_name"] == "아목시실린캡슐 250mg"
+
+
+def test_list_records_empty_returns_200_empty_list(monkeypatch):
+    # 기록 없는 예약(또는 없는 예약)은 빈 목록 200 — patients/appointments 목록 계약 미러(404 아님).
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_records_by_appointment",
+        lambda aid: [],
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"appointment_id": 999})
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_records_missing_query_returns_422(monkeypatch):
+    # appointment_id 는 필수 쿼리 — 누락은 FastAPI 기본 422(db 미호출).
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_appointment", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records")
+
+    assert resp.status_code == 422
+
+
+def test_list_records_printed_at_passes_through(monkeypatch):
+    # 이미 출력한 기록은 prescription_printed_at 값이 그대로 실린다(ISO UTC 직렬화).
+    printed = datetime(2026, 7, 25, 4, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_records_by_appointment",
+        lambda aid: [_fake_record_row(prescription_printed_at=printed)],
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"appointment_id": 10})
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["prescription_printed_at"] == "2026-07-25T04:00:00Z"
+
+
+# ── POST /medical-records/{id}/print (Story 3.3, AC3~AC5) ────────────
+
+
+def test_print_marks_and_returns_200_time_owned_by_db(monkeypatch):
+    # print 은 200(생성 아님). db 함수 인자는 record_id 뿐 — 시각 인자 없음이 계약(서버 now() 단일 소스).
+    printed = datetime(2026, 7, 25, 4, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_record",
+        lambda rid: _fake_record_row(
+            id=rid,
+            prescriptions=[{"id": 1, "drug_id": 2, "drug_name": "아목시실린캡슐 250mg",
+                            "dosage": "1일 3회 식후", "days": 3}],
+        ),
+    )
+    captured: dict = {}
+
+    def fake_mark(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _fake_record_row(id=args[0], prescription_printed_at=printed)
+
+    monkeypatch.setattr(medical_records_db, "mark_prescription_printed", fake_mark)
+
+    client = TestClient(app)
+    resp = client.post("/medical-records/7/print")
+
+    assert resp.status_code == 200
+    # 계약 고정: mark 는 record_id 하나만 받는다 — 시각 인자(위치/키워드) 없음.
+    assert captured["args"] == (7,)
+    assert captured["kwargs"] == {}
+    assert resp.json()["prescription_printed_at"] == "2026-07-25T04:00:00Z"
+
+
+def test_print_unknown_record_returns_404(monkeypatch):
+    # 없는 기록 → 404. 거부 경로라 UPDATE(mark)는 호출되지 않는다.
+    monkeypatch.setattr(medical_records_db, "fetch_medical_record", lambda rid: None)
+    monkeypatch.setattr(medical_records_db, "mark_prescription_printed", _fail)
+
+    client = TestClient(app)
+    resp = client.post("/medical-records/999/print")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "진료 기록을 찾을 수 없어요."
+
+
+def test_print_no_prescriptions_returns_400_no_update(monkeypatch):
+    # 처방 0건 기록 → 400. 거부 경로라 UPDATE(mark)는 호출되지 않는다(_fail 로 검증).
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_record",
+        lambda rid: _fake_record_row(id=rid, prescriptions=[]),
+    )
+    monkeypatch.setattr(medical_records_db, "mark_prescription_printed", _fail)
+
+    client = TestClient(app)
+    resp = client.post("/medical-records/7/print")
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "처방이 없는 진료 기록이에요."
+
+
+def test_print_reprint_reflects_new_time(monkeypatch):
+    # 재출력하면 db 가 갱신한 최신 시각을 그대로 반환한다(멱등 덮어쓰기 — CAS 불필요).
+    later = datetime(2026, 7, 25, 6, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_record",
+        lambda rid: _fake_record_row(
+            id=rid,
+            prescription_printed_at=datetime(2026, 7, 25, 4, 0, tzinfo=timezone.utc),
+            prescriptions=[{"id": 1, "drug_id": 2, "drug_name": "아목시실린캡슐 250mg",
+                            "dosage": None, "days": None}],
+        ),
+    )
+    monkeypatch.setattr(
+        medical_records_db,
+        "mark_prescription_printed",
+        lambda rid: _fake_record_row(id=rid, prescription_printed_at=later),
+    )
+
+    client = TestClient(app)
+    resp = client.post("/medical-records/7/print")
+
+    assert resp.status_code == 200
+    assert resp.json()["prescription_printed_at"] == "2026-07-25T06:30:00Z"

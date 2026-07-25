@@ -1,5 +1,6 @@
-# Claude Code tooling & local settings (machine-specific)
-.claude/
+# Claude Code tooling & local settings (machine-specific) — rules만 커밋
+.claude/*
+!.claude/rules/
 
 # OS files
 .DS_Store

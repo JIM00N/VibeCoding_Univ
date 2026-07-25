@@ -81,6 +81,9 @@ class MedicalRecordOut(BaseModel):
     - patient_id·hospital_department_id·doctor_id 는 작성 시점에 예약 행에서 복사된 스냅샷(AD-6).
     - appointment_id 는 스키마상 nullable(walk-in, Story 5.3 정직) — 이 스토리 경로는 항상 채워진다.
     - visited_at 은 ISO-8601 UTC(timestamptz)로 직렬화된다. notes 는 소견 없으면 null.
+    - prescription_printed_at(Story 3.3)은 마지막 처방전 출력 시각(ISO UTC) 또는 null(미출력).
+      생성 직후엔 항상 null 이고, POST …/print 가 서버 now() 로 채운다 — 모든 medical-records
+      엔드포인트가 이 필드를 포함해 같은 모양을 낸다(AD-10). 출력 여부 = not null.
     - prescriptions 는 기록에 합성된 자식 컬렉션(1:N, CASCADE)이라 리스트가 정합 표현 — AD-10 의
       "nested 금지"는 다:1 연관 객체를 막는 규칙이고, 각 항목은 flat 규칙을 지킨다(drug_id+drug_name).
       Epic 4 의 조회(FR-11 "진단·처방 포함")도 이 정규 모델 하나를 그대로 재사용한다.
@@ -97,4 +100,5 @@ class MedicalRecordOut(BaseModel):
     patient_name: str
     doctor_name: str
     department_name: str
+    prescription_printed_at: datetime | None = None
     prescriptions: list[PrescriptionOut] = []
