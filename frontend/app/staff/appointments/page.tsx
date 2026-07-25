@@ -233,7 +233,8 @@ export default function StaffAppointmentsPage() {
 
   const busy = pendingId !== null;
 
-  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경+기록 작성, 완료/취소 → 액션 없음.
+  // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경+기록 작성,
+  // 완료 → 처방전(Story 3.3), 취소 → 액션 없음.
   function renderActions(appt: Appointment) {
     if (appt.status === "대기") {
       return (
@@ -267,6 +268,20 @@ export default function StaffAppointmentsPage() {
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             기록 작성
+          </Link>
+        </div>
+      );
+    }
+    if (appt.status === "완료") {
+      // 처방전 조회·출력(Story 3.3) — 완료 예약(기록·처방 보유)에만 노출. 내비게이션이라 Link
+      // (프리페치·SR 내비 시맨틱) — cn(tailwind-merge) 필수([기록 작성] Link 와 동일 함정).
+      return (
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/staff/appointments/${appt.id}/prescription`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            처방전
           </Link>
         </div>
       );

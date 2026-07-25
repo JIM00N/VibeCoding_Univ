@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-25
+last_updated: 2026-07-25 # Story 3.3 dev 착수
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -69,7 +69,7 @@ development_status:
   epic-3: in-progress
   3-1-확정-예약에-진료-기록-작성-완료-전이: done
   3-2-진료-기록에-처방-추가: done
-  3-3-처방전-조회-출력: ready-for-dev # 스코프 추가 2026-07-24 — 착수 게이트: 3.2 done
+  3-3-처방전-조회-출력: review # 스코프 추가 2026-07-24 — 착수 게이트: 3.2 done · 2026-07-25 dev→review(pytest 96·라이브 20/20·브라우저 실측)
   epic-3-retrospective: optional
 
   # Epic 4: 조회 (P0 한 줄기 완성)

@@ -97,6 +97,8 @@ export type MedicalRecord = {
   patient_name: string;
   doctor_name: string;
   department_name: string;
+  // 마지막 처방전 출력 시각(ISO UTC) 또는 null(미출력, Story 3.3). 서버 now() 가 소유 — 출력 여부 = not null.
+  prescription_printed_at: string | null;
   prescriptions: Prescription[];
 };
 
@@ -241,5 +243,22 @@ export const api = {
     request<MedicalRecord>("/medical-records", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  /** 예약의 진료 기록·처방 조회(Story 3.3). 처방전 화면이 시트 데이터를 로드한다(0..1건, 예약당 1건).
+   *  없으면 빈 배열(404 아님 — 목록 계약). 없는 appointment_id 는 422 를 request 가 일반 메시지로 던진다. */
+  getMedicalRecords: async (appointmentId: number): Promise<MedicalRecord[]> => {
+    const data = await request<MedicalRecord[]>(
+      `/medical-records?appointment_id=${encodeURIComponent(String(appointmentId))}`,
+    );
+    // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 처방전 출력(Story 3.3). 서버가 출력 시각을 기록하고 갱신된 기록(정규 모델)을 돌려준다(body 없음).
+   *  없는 기록(404)·처방 0건(400)은 request 가 4xx {detail} 한국어로 던진다 — 실패 시 인쇄하지 않는다. */
+  printPrescription: (recordId: number): Promise<MedicalRecord> =>
+    request<MedicalRecord>(`/medical-records/${recordId}/print`, {
+      method: "POST",
     }),
 };

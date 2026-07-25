@@ -119,6 +119,36 @@ def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
     return _to_medical_record_out(row)
 
 
+def list_medical_records(appointment_id: int) -> list[MedicalRecordOut]:
+    """예약의 진료 기록·처방을 정규 모델 리스트(0..1행)로 조회한다(Story 3.3, AC2).
+
+    필터드 목록이라 없으면 빈 리스트(404 아님 — 목록 계약 미러). "기록 없음" 해석은 프런트 몫.
+    """
+    rows = medical_records_db.fetch_medical_records_by_appointment(appointment_id)
+    return [_to_medical_record_out(row) for row in rows]
+
+
+def print_prescription(record_id: int) -> MedicalRecordOut:
+    """처방전 출력 시각을 기록하고(서버 now()) 갱신된 정규 모델을 반환한다(Story 3.3, AC3~AC5).
+
+    가드(순서 고정 — 거부 경로에선 UPDATE 를 호출하지 않는다):
+    ① 없는 기록 → 404  ② 처방 0건 → 400(처방이 없으면 처방전이 성립하지 않음)
+    시각은 SQL now() 만 소유한다 — 서비스가 datetime.now() 를 만들거나 db 에 넘기지 않는다(계약).
+    ⚠️ 3.1 처럼 CAS 를 복제하지 않는다 — 경합 대상이 없고(수정/삭제 API 부재) printed_at 덮어쓰기는
+    멱등이다(재출력 = 최신 시각). "패턴이 아니라 이유를 복사"가 이 프로젝트의 규율.
+    """
+    current = medical_records_db.fetch_medical_record(record_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="진료 기록을 찾을 수 없어요.")
+    if not current["prescriptions"]:
+        raise HTTPException(status_code=400, detail="처방이 없는 진료 기록이에요.")
+    row = medical_records_db.mark_prescription_printed(record_id)
+    if row is None:
+        # 삭제 API 부재로 도달 불가 — 방어(위 404 문구 재사용).
+        raise HTTPException(status_code=404, detail="진료 기록을 찾을 수 없어요.")
+    return _to_medical_record_out(row)
+
+
 def _to_medical_record_out(row: dict) -> MedicalRecordOut:
     """db dict 행 → MedicalRecordOut 매핑. 리소스당 정규 모델 하나로 한 곳에서 매핑(AD-10)."""
     return MedicalRecordOut(
@@ -133,6 +163,7 @@ def _to_medical_record_out(row: dict) -> MedicalRecordOut:
         patient_name=row["patient_name"],
         doctor_name=row["doctor_name"],
         department_name=row["department_name"],
+        prescription_printed_at=row["prescription_printed_at"],
         # jsonb 집계는 psycopg 가 list[dict] 로 파싱해 준다 — 키가 PrescriptionOut 과 1:1(AD-10 flat).
         prescriptions=[PrescriptionOut(**p) for p in row["prescriptions"]],
     )

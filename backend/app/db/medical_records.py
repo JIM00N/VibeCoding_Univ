@@ -49,7 +49,7 @@ _INSERT_RECORD_AND_COMPLETE = """
                %s, %s, %s
         from completed c
         returning id, appointment_id, patient_id, hospital_department_id,
-                  doctor_id, visited_at, diagnosis, notes
+                  doctor_id, visited_at, diagnosis, notes, prescription_printed_at
     ),
     rx as (
         insert into public.prescription (medical_record_id, drug_id, dosage, days)
@@ -60,6 +60,7 @@ _INSERT_RECORD_AND_COMPLETE = """
     )
     select i.id, i.appointment_id, i.patient_id, i.hospital_department_id,
            i.doctor_id, i.visited_at, i.diagnosis, i.notes,
+           i.prescription_printed_at,
            p.name   as patient_name,
            doc.name as doctor_name,
            d.name   as department_name,
@@ -100,4 +101,126 @@ def insert_medical_record_and_complete(
                 _INSERT_RECORD_AND_COMPLETE,
                 (appointment_id, visited_at, diagnosis, notes, Jsonb(prescriptions)),
             )
+            return cur.fetchone()
+
+
+# ── 조회 2종 (Story 3.3, FR-10 확장) ────────────────────────────────────────
+# 3.2 CTE 최종 SELECT 의 투영을 독립 SELECT 로 미러한다 — 응답 모양의 단일 진실(같은 표시 조인 +
+# prescription_printed_at + 처방 jsonb 집계). 두 사본(appointment 기준·id 기준)은 where 절만 다르다.
+# refdata `_SELECT_DOCTORS`/`_SELECT_DOCTORS_BY_HD` 컨벤션 준수 — 공유 fragment 추출(표시 조인 SQL
+# 사본)은 기존 deferred-work 에 합류(지금 정리하지 않는다).
+
+_SELECT_RECORDS_BY_APPOINTMENT = """
+    select mr.id, mr.appointment_id, mr.patient_id, mr.hospital_department_id,
+           mr.doctor_id, mr.visited_at, mr.diagnosis, mr.notes,
+           mr.prescription_printed_at,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name,
+           coalesce(
+               (select jsonb_agg(jsonb_build_object(
+                    'id', pr.id, 'drug_id', pr.drug_id, 'drug_name', dr.name,
+                    'dosage', pr.dosage, 'days', pr.days) order by pr.id)
+                from public.prescription pr
+                join public.drug dr on dr.id = pr.drug_id
+                where pr.medical_record_id = mr.id),
+               '[]'::jsonb) as prescriptions
+    from public.medical_record mr
+    join public.patient p               on p.id  = mr.patient_id
+    join public.hospital_department hd  on hd.id = mr.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    join public.doctor doc              on doc.id = mr.doctor_id
+    where mr.appointment_id = %s
+    order by mr.id
+"""
+
+_SELECT_RECORD_BY_ID = """
+    select mr.id, mr.appointment_id, mr.patient_id, mr.hospital_department_id,
+           mr.doctor_id, mr.visited_at, mr.diagnosis, mr.notes,
+           mr.prescription_printed_at,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name,
+           coalesce(
+               (select jsonb_agg(jsonb_build_object(
+                    'id', pr.id, 'drug_id', pr.drug_id, 'drug_name', dr.name,
+                    'dosage', pr.dosage, 'days', pr.days) order by pr.id)
+                from public.prescription pr
+                join public.drug dr on dr.id = pr.drug_id
+                where pr.medical_record_id = mr.id),
+               '[]'::jsonb) as prescriptions
+    from public.medical_record mr
+    join public.patient p               on p.id  = mr.patient_id
+    join public.hospital_department hd  on hd.id = mr.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    join public.doctor doc              on doc.id = mr.doctor_id
+    where mr.id = %s
+"""
+
+
+def fetch_medical_records_by_appointment(appointment_id: int) -> list[dict[str, Any]]:
+    """예약에 속한 진료 기록·처방을 정규 응답 투영으로 반환(0..1행 — 예약당 기록 1건, AC4).
+
+    필터드 목록이라 없으면 빈 리스트다(404 아님 — patients/appointments 목록 계약 미러).
+    파라미터화 SQL(injection 방지). jsonb 집계는 psycopg 가 list[dict] 로 파싱해 준다.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_RECORDS_BY_APPOINTMENT, (appointment_id,))
+            return cur.fetchall()
+
+
+def fetch_medical_record(record_id: int) -> dict[str, Any] | None:
+    """진료 기록 1건을 정규 응답 투영으로 반환(print 가드용). 없으면 None."""
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_RECORD_BY_ID, (record_id,))
+            return cur.fetchone()
+
+
+# ── 처방전 출력 도장 (Story 3.3, AC3·AC4) ──────────────────────────────────
+# UPDATE 가 시각을 소유한다 — set prescription_printed_at = now(). 클라이언트·서비스가 시각을 보내지
+# 않고, 이 문장의 SQL now() 가 단일 소스다(AD-6 "클라이언트 미신뢰" 정신). CTE 로 UPDATE 뒤 표시
+# 조인·처방 집계를 붙여 갱신된 정규 행을 한 왕복으로 반환한다(조회 투영과 같은 모양).
+# ⚠️ 3.1 처럼 CAS 가 없는 이유: 기록·처방엔 삭제/수정 API 가 없어 검증(fetch)과 UPDATE 사이에 상태가
+# 바뀔 경로가 없고, printed_at 덮어쓰기는 멱등이다(두 번 눌러도 최신 시각). 3.1 의 CAS 는 status 전이
+# 경합용 — 여기 복제하지 말 것. 시각 인자를 받지 않는 시그니처가 계약이다.
+_MARK_PRESCRIPTION_PRINTED = """
+    with updated as (
+        update public.medical_record
+        set prescription_printed_at = now()
+        where id = %s
+        returning id, appointment_id, patient_id, hospital_department_id,
+                  doctor_id, visited_at, diagnosis, notes, prescription_printed_at
+    )
+    select u.id, u.appointment_id, u.patient_id, u.hospital_department_id,
+           u.doctor_id, u.visited_at, u.diagnosis, u.notes,
+           u.prescription_printed_at,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name,
+           coalesce(
+               (select jsonb_agg(jsonb_build_object(
+                    'id', pr.id, 'drug_id', pr.drug_id, 'drug_name', dr.name,
+                    'dosage', pr.dosage, 'days', pr.days) order by pr.id)
+                from public.prescription pr
+                join public.drug dr on dr.id = pr.drug_id
+                where pr.medical_record_id = u.id),
+               '[]'::jsonb) as prescriptions
+    from updated u
+    join public.patient p               on p.id  = u.patient_id
+    join public.hospital_department hd  on hd.id = u.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    join public.doctor doc              on doc.id = u.doctor_id
+"""
+
+
+def mark_prescription_printed(record_id: int) -> dict[str, Any] | None:
+    """처방전 출력 시각을 now() 로 기록하고 갱신된 정규 행을 반환한다. 없는 기록이면 0행 → None.
+
+    시각 인자를 받지 않는다(계약) — SQL now() 가 시각의 단일 소스다(서버 미신뢰 원칙).
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_MARK_PRESCRIPTION_PRINTED, (record_id,))
             return cur.fetchone()
