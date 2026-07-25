@@ -493,6 +493,26 @@ def test_create_record_days_below_one_rejected(monkeypatch):
     assert resp.json()["detail"] == "처방 일수는 1 이상의 숫자로 입력해 주세요."
 
 
+def test_create_record_days_over_int4_max_rejected(monkeypatch):
+    # ④' 상한 — days 가 int4 max(2,147,483,647)를 넘으면 CTE 캐스트 overflow(500) 전에 400 으로 막는다.
+    # 프런트 정수 검증은 상한이 없어(자릿수 무제한) 이 값이 서버까지 도달할 수 있다(리뷰 지적).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _fake_appointment(id=aid)
+    )
+    monkeypatch.setattr(
+        medical_records_db, "insert_medical_record_and_complete", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/medical-records",
+        json=_payload(prescriptions=[{"drug_id": 1, "days": 2_147_483_648}]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "처방 일수는 1 이상의 숫자로 입력해 주세요."
+
+
 def test_create_record_non_numeric_days_returns_422(monkeypatch):
     # days 는 int — 숫자 아닌 값은 Pydantic 이 422 로 거부(쓰기 미호출).
     monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)

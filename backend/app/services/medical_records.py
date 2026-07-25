@@ -14,6 +14,12 @@ from app.schemas.medical_records import (
     PrescriptionOut,
 )
 
+# prescription.days 는 int4 컬럼 — 이 범위를 넘는 값은 CTE 의 `days int` 캐스트에서 overflow 로
+# 500 이 된다(전역 핸들러가 "일시적 서버 오류" 로 감싸 영구 입력 오류를 재시도 안내로 오인시킴).
+# 앱이 규칙을 소유하므로(days<1 과 같은 원리) 상한도 여기서 400 으로 먼저 거부한다(도메인 제한 발명이
+# 아니라 컬럼 타입 경계 방어 — AC 는 상한을 두지 않으므로 int4 max 안쪽 값은 그대로 저장된다).
+_DAYS_MAX = 2_147_483_647  # PostgreSQL int4 max
+
 
 def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
     """확정 예약에 진료 기록을 작성하고 같은 트랜잭션에서 예약을 완료로 전이한다(FR-8·FR-9, Story 3.1).
@@ -61,9 +67,13 @@ def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
             detail="담당 의사가 지정되지 않은 예약이에요. 담당 의사를 먼저 지정해 주세요.",
         )
 
-    # ④' 처방 일수는 1 이상(FR-10) — DB days 엔 CHECK 가 없어 앱이 규칙을 소유한다(①과 같은 원리.
-    # Pydantic ge=1 은 422 리스트 detail 로 붕괴돼 쓰지 않는 확립 패턴 — 400 한국어로 먼저 거부).
-    if any(p.days is not None and p.days < 1 for p in payload.prescriptions):
+    # ④' 처방 일수는 1 이상 int4 max 이하(FR-10) — DB days 엔 CHECK 가 없어 앱이 규칙을 소유한다
+    # (①과 같은 원리. Pydantic ge=1 은 422 리스트 detail 로 붕괴돼 쓰지 않는 확립 패턴 — 400 한국어로
+    # 먼저 거부). 상한(int4)을 열어 두면 큰 값이 CTE 캐스트에서 overflow → 500 이 되므로 함께 막는다.
+    if any(
+        p.days is not None and not (1 <= p.days <= _DAYS_MAX)
+        for p in payload.prescriptions
+    ):
         raise HTTPException(
             status_code=400,
             detail="처방 일수는 1 이상의 숫자로 입력해 주세요.",

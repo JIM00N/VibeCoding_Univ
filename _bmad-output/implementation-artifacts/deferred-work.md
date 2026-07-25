@@ -74,3 +74,9 @@
 ## Deferred from: code review of 2-2-직원-예약-확정-취소-상태-흐름 (2026-07-22)
 
 - **`formatReservedAt` 중복(2-소스)** — 2.2가 공유 헬퍼 `frontend/lib/format.ts`를 새로 만들었으나 2.1의 로컬 복사본 `frontend/app/patient/book/page.tsx:61`을 import로 이관하지 않았다. 두 정의는 바이트 동일(같은 옵션·`Asia/Seoul`)이라 출력 정합 문제는 없고, 스펙 Project Structure Notes가 "미러"를 명시 허용한다. 정리하려면 book 화면이 `@/lib/format`을 import하도록 교체하면 되나 2.1 파일을 손대므로 add-only 규율상 보류. 향후 book 화면을 만질 때 함께 이관. [frontend/lib/format.ts:6 ↔ frontend/app/patient/book/page.tsx:61]
+
+## Deferred from: code review of 3-2-진료-기록에-처방-추가 (2026-07-25)
+
+- **`drug_id` bigint overflow → 500** — 크래프트 API 입력(19+자리 `drug_id`)이 Pydantic 무제한 int 를 통과해 CTE 의 `drug_id bigint` 캐스트에서 overflow, FK 체크 전에 500. 드롭다운 UI 는 실제 시드 id 만 보내 도달 불가라 낮음. 전역 핸들러가 친절한 한국어 500 으로 감싸 raw 크래시는 없음. days 상한 가드(이 리뷰에서 수정)와 같은 뿌리 — 무제한 int → DB 타입 캐스트. 하드닝 시 drug_id 도 bigint 경계 방어하거나 FK 400 으로 매핑. [backend/app/db/medical_records.py:58]
+- **`prescriptions` 배열·`dosage` 길이 상한 없음** — `prescriptions: list[PrescriptionCreate] = []` 에 `max_length` 없고 `dosage: str | None` 무제한. 한 요청이 임의 크기 배열을 한 문장에 확장·INSERT — 인증 전 P0 데모의 견고성/DoS 갭. 앱 내 어떤 배열도 상한이 없어 이 변경 고유 문제는 아니나 첫 배열 입력. 향후 `max_length` + dosage 길이 제한. [backend/app/schemas/medical_records.py:57]
+- **약 목록 빈 배열(`[]`) 시 완료 불가 처방 행 추가 가능** — `+ 처방 추가` 가 `disabled={drugs === null}` 라 `[]`(시드 전무·전량 삭제)는 못 막아 옵션 0개 Select 행이 추가된다. 제출 시 영구 "약을 선택해 주세요", 삭제로만 복구. 약은 시드 전용(FR-13, 항상 4행)이라 실사용 미발생. 향후 빈 목록도 버튼 disabled + 안내(fetch 실패 재시도와 별개 경로). [frontend/app/staff/appointments/[id]/record/page.tsx:304]
