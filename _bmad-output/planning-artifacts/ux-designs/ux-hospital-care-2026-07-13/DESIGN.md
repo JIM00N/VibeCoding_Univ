@@ -82,7 +82,7 @@ shadcn/ui 기본을 통째로 상속한다. 이 문서는 **브랜드 델타만*
 
 ## Layout & Spacing
 
-shadcn / Tailwind 4-기반 스케일(4·8·12·16·24·32·48…) 그대로. **앱 셸** = 상단 **역할 컨텍스트 바**(현재 역할 + 선택된 환자) + 콘텐츠.
+shadcn / Tailwind 4-기반 스케일(4·8·12·16·24·32·48…) 그대로. **앱 셸** = 상단 **역할 컨텍스트 바**(현재 역할 + 선택된 환자/의사) + 콘텐츠. **직원 화면 예외(2026-07-25 correct-course, UX-DR12):** 좌측 사이드바 내비(예약관리 강조·신규 환자 등록·환자 목록·검색), `≥md` 고정·모바일 접힘. 환자·의사 화면은 상단 바만 유지.
 
 - **폼 화면**(환자 등록·예약·기록 작성): `max-w-2xl`(672px) 단일 컬럼 — 초점 유지.
 - **직원 목록/표**(환자·예약 목록): 넓은 폭 허용(`≥md`에서 밀도 있는 표).
@@ -104,7 +104,7 @@ shadcn 기본 라운딩 유지(input 6px / card·button 8px / dialog 12px). 상�
 - **Button (primary)** — `{colors.primary}` fill / 흰 텍스트 / `{rounded.md}`. 나머지 variant(secondary·outline·ghost·destructive)는 shadcn 기본.
 - **Status Badge** — `appointment.status` 4값 전용. `colors.status-*` 색 + **반드시 한국어 텍스트 병기**(대기/확정/완료/취소). 색만으로 구분 금지(접근성).
 - **Slot Picker(슬롯 피커)** — 병원 특유 핵심 컴포넌트. 30분 격자 셀: `available`=outline 클릭 가능, `selected`=`{colors.primary}` fill, `taken`=muted + disabled + "예약됨" 표기. (행동 규칙은 EXPERIENCE.md.)
-- **Role Context Bar** — 상단 고정. 현재 역할(환자/직원)과 선택된 환자명, 전환 액션. 무인증 데모임을 은근히 드러냄.
+- **Role Context Bar** — 상단 고정. 현재 역할(환자/직원/의사)과 선택된 환자명/의사명, 전환 액션. 무인증 데모임을 은근히 드러냄.
 - **Prescription Row(처방 행)** — 진료 기록 폼 안의 반복 행(약 선택 + 용법·용량 + 일수), 추가/삭제. 0..N개.
 
 ## Do's and Don'ts
