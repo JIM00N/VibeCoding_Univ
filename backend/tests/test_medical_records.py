@@ -664,16 +664,22 @@ def test_list_records_empty_returns_200_empty_list(monkeypatch):
     assert resp.json() == []
 
 
-def test_list_records_missing_query_returns_422(monkeypatch):
-    # appointment_id 는 필수 쿼리 — 누락은 FastAPI 기본 422(db 미호출).
+def test_list_records_missing_query_returns_400(monkeypatch):
+    # Story 4.1 계약 개정: appointment_id·patient_id 둘 다 optional 이 되면서, 둘 다 없으면
+    # 서비스가 400 한국어로 거부한다(3.3 의 "필수 쿼리 422" 를 이 스토리가 소유해 개정). db 미호출.
     monkeypatch.setattr(
         medical_records_db, "fetch_medical_records_by_appointment", _fail
+    )
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_patient", _fail
     )
 
     client = TestClient(app)
     resp = client.get("/medical-records")
 
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
+    assert resp.json()["detail"] == "조회 조건이 필요해요."
 
 
 def test_list_records_printed_at_passes_through(monkeypatch):
@@ -690,6 +696,88 @@ def test_list_records_printed_at_passes_through(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()[0]["prescription_printed_at"] == "2026-07-25T04:00:00Z"
+
+
+# ── GET /medical-records?patient_id= (Story 4.1, AC2·AC6) ────────────
+
+
+def test_list_records_by_patient_filters_and_nests_prescriptions(monkeypatch):
+    # AC2/AC6: ?patient_id= 이면 환자용 fetch 를 그 인자로 호출하고, 처방을 nested 로 담은 정규
+    # MedicalRecordOut 리스트(같은 키셋)를 반환한다. appointment_id 경로 fetch 는 호출되면 안 된다.
+    captured: dict = {}
+
+    def fake_by_patient(patient_id):
+        captured["patient_id"] = patient_id
+        return [
+            _fake_record_row(
+                patient_id=patient_id,
+                prescriptions=[
+                    {"id": 1, "drug_id": 2, "drug_name": "아목시실린캡슐 250mg",
+                     "dosage": "1일 3회 식후", "days": 3},
+                    {"id": 2, "drug_id": 5, "drug_name": "타이레놀정 500mg",
+                     "dosage": "1일 2회", "days": 2},
+                ],
+            )
+        ]
+
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_patient", fake_by_patient
+    )
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_appointment", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"patient_id": 1})
+
+    assert resp.status_code == 200
+    assert captured["patient_id"] == 1
+    data = resp.json()
+    assert isinstance(data, list) and len(data) == 1
+    # AD-10: 3.3 과 같은 정규 모델 키셋(새 모델 없음).
+    assert set(data[0].keys()) == {
+        "id", "appointment_id", "patient_id", "hospital_department_id",
+        "doctor_id", "visited_at", "diagnosis", "notes",
+        "patient_name", "doctor_name", "department_name",
+        "prescription_printed_at", "prescriptions",
+    }
+    assert data[0]["patient_id"] == 1
+    assert len(data[0]["prescriptions"]) == 2
+    assert data[0]["prescriptions"][0]["drug_name"] == "아목시실린캡슐 250mg"
+
+
+def test_list_records_by_patient_empty_returns_200_empty_list(monkeypatch):
+    # 진료 기록 없는 환자는 빈 목록 200(404 아님 — 목록 계약). 프런트가 빈 상태로 해석한다(AC4).
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_patient", lambda pid: []
+    )
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_appointment", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"patient_id": 999})
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_records_by_appointment_still_works_after_optional(monkeypatch):
+    # 회귀(Story 3.3): ?appointment_id= 경로는 그대로 동작하고 환자용 fetch 는 호출되면 안 된다.
+    monkeypatch.setattr(
+        medical_records_db,
+        "fetch_medical_records_by_appointment",
+        lambda aid: [_fake_record_row(appointment_id=aid)],
+    )
+    monkeypatch.setattr(
+        medical_records_db, "fetch_medical_records_by_patient", _fail
+    )
+
+    client = TestClient(app)
+    resp = client.get("/medical-records", params={"appointment_id": 10})
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["appointment_id"] == 10
 
 
 # ── POST /medical-records/{id}/print (Story 3.3, AC3~AC5) ────────────

@@ -21,13 +21,16 @@ def create_medical_record(payload: MedicalRecordCreate) -> MedicalRecordOut:
 
 
 @router.get("/medical-records", response_model=list[MedicalRecordOut])
-def list_medical_records(appointment_id: int) -> list[MedicalRecordOut]:
-    """예약의 진료 기록·처방 조회(Story 3.3, AC2). 처방전 화면이 시트 데이터를 로드한다.
+def list_medical_records(
+    appointment_id: int | None = None, patient_id: int | None = None
+) -> list[MedicalRecordOut]:
+    """진료 기록·처방 조회 — 필터 두 종(둘 다 optional, 하나로 분기).
 
-    appointment_id 는 필수 쿼리 — 누락은 FastAPI 기본 422. 없으면 빈 목록(404 아님, 목록 계약).
-    Epic 4 가 나중에 patient_id 대안 필터를 같은 엔드포인트에 얹는다 — 지금은 appointment_id 만.
+    - ?appointment_id=: 그 예약의 기록(직원 처방전 화면, Story 3.3) — 3.3 계약 그대로(회귀 없음).
+    - ?patient_id=: 그 환자의 지난 기록 전체(환자용 조회, Story 4.1, FR-11·AD-8, visited_at desc).
+    둘 다 없으면 서비스가 400 한국어(조회 조건 필수). 결과 없으면 빈 목록(404 아님, 목록 계약).
     """
-    return medical_records_service.list_medical_records(appointment_id)
+    return medical_records_service.list_medical_records(appointment_id, patient_id)
 
 
 @router.post("/medical-records/{record_id}/print", response_model=MedicalRecordOut)
