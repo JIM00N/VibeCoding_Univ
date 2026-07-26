@@ -2,7 +2,8 @@
 
 // 직원 환자 목록·이름 검색 (FR-5, Story 1.4). GET /patients?search= 로 서버측 필터.
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1, AD-10).
-// 반응형(UX-DR11): ≥md 는 밀도 있는 표, 모바일은 카드. 행 클릭 상세 이동은 Story 4.2 범위라 여기선 표시만.
+// 반응형(UX-DR11): ≥md 는 밀도 있는 표, 모바일은 카드. 환자 행(이름 셀)·모바일 카드를 클릭하면
+// 그 환자의 전체 진료 내역 상세(/staff/patients/[id])로 이동한다(Story 4.2 — 조회 링크만 add-only).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -126,8 +127,16 @@ export default function PatientListPage() {
                   </TableHeader>
                   <TableBody>
                     {patients.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableRow key={p.id} className="hover:bg-accent">
+                        {/* 이름 셀만 링크 — <a> 로 <tr> 를 감싸면 HTML 위반이라 셀 링크로(Story 4.2). */}
+                        <TableCell className="font-medium">
+                          <Link
+                            href={`/staff/patients/${p.id}`}
+                            className="outline-none hover:underline focus-visible:underline"
+                          >
+                            {p.name}
+                          </Link>
+                        </TableCell>
                         <TableCell>{orDash(p.birth_date)}</TableCell>
                         <TableCell>{genderText(p.gender)}</TableCell>
                         <TableCell>{orDash(p.phone)}</TableCell>
@@ -137,20 +146,26 @@ export default function PatientListPage() {
                 </Table>
               </div>
 
-              {/* 모바일(<md): 카드 리스트 */}
+              {/* 모바일(<md): 카드 리스트 — 카드 전체를 상세 링크로(staff 홈 카드 링크 관용 미러). */}
               <div className="grid gap-3 md:hidden">
                 {patients.map((p) => (
-                  <Card key={p.id} className="p-4">
-                    <div className="text-base font-semibold">{p.name}</div>
-                    <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
-                      <dt className="text-muted-foreground">생년월일</dt>
-                      <dd>{orDash(p.birth_date)}</dd>
-                      <dt className="text-muted-foreground">성별</dt>
-                      <dd>{genderText(p.gender)}</dd>
-                      <dt className="text-muted-foreground">연락처</dt>
-                      <dd>{orDash(p.phone)}</dd>
-                    </dl>
-                  </Card>
+                  <Link
+                    key={p.id}
+                    href={`/staff/patients/${p.id}`}
+                    className="block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <Card className="p-4 transition-colors hover:bg-accent">
+                      <div className="text-base font-semibold">{p.name}</div>
+                      <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
+                        <dt className="text-muted-foreground">생년월일</dt>
+                        <dd>{orDash(p.birth_date)}</dd>
+                        <dt className="text-muted-foreground">성별</dt>
+                        <dd>{genderText(p.gender)}</dd>
+                        <dt className="text-muted-foreground">연락처</dt>
+                        <dd>{orDash(p.phone)}</dd>
+                      </dl>
+                    </Card>
+                  </Link>
                 ))}
               </div>
 
