@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-26 # Story 6.1 구현 완료 → review. 백엔드 ?doctor_id= 필터 + 프런트 의사 화면 3장. pytest 105·lint·build·curl green. 브라우저 실측·코드리뷰·머지는 사용자 게이트 대기
+last_updated: 2026-07-26 # Story 6.1 done — PR #18 머지·배포·라이브 실측 완료. epic-6 진행 중(6.2·6.3 남음). 다음: 6.2 직원 좌측 사이드바 셸
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -87,7 +87,7 @@ development_status:
 
   # Epic 6: 역할 3분화 & 의사 대시보드 & 직원 셸 (P0.5 — 번호는 6이나 실행 순서는 Epic 4 done 후·Epic 5 전, correct-course 2026-07-25)
   epic-6: in-progress # 2026-07-26 첫 스토리(6.1) 생성으로 착수 (correct-course 2026-07-25 실행 순서: Epic 4 → Epic 6 → Epic 5)
-  6-1-3역할-진입-의사-대시보드: review
+  6-1-3역할-진입-의사-대시보드: done # PR #18 머지(f7fb45d)·배포·라이브 실측(?doctor_id= 필터·/doctor 200) 완료. 코드리뷰 Patch 3 반영·Defer 1
   6-2-직원-좌측-사이드바-셸: backlog
   6-3-직원-대리-예약: backlog
   epic-6-retrospective: optional
