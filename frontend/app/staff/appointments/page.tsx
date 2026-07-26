@@ -14,6 +14,7 @@ import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
 import { CategoryBadge } from "@/components/category-badge";
+import { ProxyBookingDialog } from "@/components/proxy-booking-dialog";
 import { RoleContextBar } from "@/components/role-context-bar";
 import {
   AlertDialog,
@@ -98,6 +99,11 @@ export default function StaffAppointmentsPage() {
   const [newDoctorId, setNewDoctorId] = useState<string | null>(null);
   // 동기 재진입 가드 — pendingId(state)는 같은 tick 연타 사이에 아직 갱신 전이라, ref 로 즉시 막는다(2.1 패턴).
   const submittingRef = useRef(false);
+  // 대리 예약 다이얼로그 열림 여부(Story 6.3). 폼 상태는 다이얼로그가 소유하고, 이 페이지는 결과만 받는다.
+  const [bookingOpen, setBookingOpen] = useState(false);
+  // 열 때마다 증가시켜 다이얼로그의 key 로 쓴다 → 열 때마다 새로 마운트된다. 슬롯·날짜 계산이
+  // "여는 시점"의 현재 시각을 기준으로 다시 이뤄져야 지난 시간이 예약 가능하게 남지 않는다(코드리뷰).
+  const [bookingSession, setBookingSession] = useState(0);
 
   useEffect(() => {
     // setLoading 을 타이머 콜백 안에서 호출한다 — effect 본문의 동기 setState 는 React 19 린트가 막는다(1.4 패턴).
@@ -233,6 +239,12 @@ export default function StaffAppointmentsPage() {
 
   const busy = pendingId !== null;
 
+  // 대리 예약 열기 — 세션을 올려 다이얼로그를 새로 마운트한 뒤 연다(시각 재계산).
+  function openProxyBooking() {
+    setBookingSession((n) => n + 1);
+    setBookingOpen(true);
+  }
+
   // 상태별 행 액션: 대기 → 확정+취소+의사 변경, 확정 → 취소+의사 변경+기록 작성,
   // 완료 → 처방전(Story 3.3), 취소 → 액션 없음.
   function renderActions(appt: Appointment) {
@@ -297,6 +309,8 @@ export default function StaffAppointmentsPage() {
       <main className="mx-auto w-full max-w-4xl px-6 py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-[28px] font-bold leading-tight">예약 관리</h1>
+          {/* 대리 예약(Story 6.3) — 이동이 아니라 모달 트리거라 Link 가 아닌 Button. */}
+          <Button onClick={openProxyBooking}>대리 예약</Button>
         </div>
         <p className="mt-2 text-muted-foreground">들어온 예약을 확정하거나 취소해요.</p>
 
@@ -306,7 +320,7 @@ export default function StaffAppointmentsPage() {
           ) : error ? (
             <ErrorState message={error} onRetry={() => setReloadNonce((n) => n + 1)} />
           ) : isEmpty ? (
-            <EmptyState />
+            <EmptyState onProxyBook={openProxyBooking} />
           ) : (
             <>
               {/* 데스크톱(≥md): 밀도 있는 표 */}
@@ -468,6 +482,20 @@ export default function StaffAppointmentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 대리 예약 다이얼로그 (Story 6.3, FR-18) — 폼은 컴포넌트가 소유하고, 생성 결과만 받아 목록에
+          prepend 한다. 목록 SQL 이 id desc(최신 위)라 재조회 없이도 정렬이 맞는다. */}
+      <ProxyBookingDialog
+        key={bookingSession}
+        open={bookingOpen}
+        onOpenChange={setBookingOpen}
+        onCreated={(appt) => {
+          setAppointments((prev) => [appt, ...prev]);
+          // 목록이 오류/로딩 상태면 방금 만든 예약이 화면에 못 나타난다(ErrorState·Skeleton 이 렌더됨)
+          // — 성공 toast 만 뜨고 목록엔 없어서 직원이 중복 예약을 만들 수 있다. 서버 진실로 재동기화한다.
+          if (error || loading) setReloadNonce((n) => n + 1);
+        }}
+      />
     </>
   );
 }
@@ -497,12 +525,15 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-// 빈 상태 — 아직 예약이 없음(환자가 예약을 잡으면 표시).
-function EmptyState() {
+// 빈 상태 — 아직 예약이 없음(환자가 예약을 잡거나 직원이 대리 예약을 만들면 표시).
+function EmptyState({ onProxyBook }: { onProxyBook: () => void }) {
   return (
     <div className="rounded-xl border border-dashed py-16 text-center">
       <p className="text-lg font-medium">아직 예약이 없어요.</p>
       <p className="mt-1 text-muted-foreground">환자가 예약을 잡으면 여기에 표시돼요.</p>
+      <div className="mt-4">
+        <Button onClick={onProxyBook}>대리 예약</Button>
+      </div>
     </div>
   );
 }
