@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { RoleContextBar } from "@/components/role-context-bar";
@@ -36,6 +37,7 @@ function orDash(value: string | null): string {
 }
 
 export default function PatientListPage() {
+  const router = useRouter();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -127,12 +129,19 @@ export default function PatientListPage() {
                   </TableHeader>
                   <TableBody>
                     {patients.map((p) => (
-                      <TableRow key={p.id} className="hover:bg-accent">
-                        {/* 이름 셀만 링크 — <a> 로 <tr> 를 감싸면 HTML 위반이라 셀 링크로(Story 4.2). */}
+                      // 행 전체를 상세로 이동(모바일 카드와 동일). <a> 로 <tr> 를 감쌀 수 없어(HTML 위반)
+                      // 행 onClick 으로 이동하고, 이름 셀엔 키보드·SR 접근용 실제 링크를 둔다(포커스 링 포함).
+                      <TableRow
+                        key={p.id}
+                        className="cursor-pointer hover:bg-accent"
+                        onClick={() => router.push(`/staff/patients/${p.id}`)}
+                      >
                         <TableCell className="font-medium">
                           <Link
                             href={`/staff/patients/${p.id}`}
-                            className="outline-none hover:underline focus-visible:underline"
+                            // 링크 클릭은 행 onClick 으로 버블링돼 이중 이동하지 않게 막는다(같은 URL이라 무해하나 정리).
+                            onClick={(e) => e.stopPropagation()}
+                            className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
                           >
                             {p.name}
                           </Link>

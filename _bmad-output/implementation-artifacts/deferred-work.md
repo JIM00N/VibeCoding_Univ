@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of 4-2-직원-환자별-전체-진료-내역-조회 (2026-07-26)
+
+- **상세→상세 직접 이동 시 1프레임 스테일 렌더** — `/staff/patients/[id]` 는 `setLoading(true)`·환자/오류/부재 세팅을 전부 `setTimeout(…, 0)` 콜백 안에서 하므로(React 19 린트 회피), 같은 컴포넌트 인스턴스로 다른 환자 상세로 **직접** 이동(주소창 편집·브라우저 뒤로/앞으로)하면 `patientId` 는 즉시 바뀌어 리렌더되지만 `loading`/`patient`/`error`/`notFound` 는 타이머 발화 전이라 **1프레임 동안 이전 환자 데이터(또는 스테일 ErrorState/NotFound)가 새 URL 아래** 보인다. 도달성 낮음(앱에 상세→상세 링크가 없어 목록 경유가 정상 경로)·자기수정(타이머 0ms). 4.1 이 동일류 1프레임 스테일(탭 간 신원 교체)을 defer 한 선례를 계승. 근본 해결은 컴포넌트 `key={id}` 리마운트 또는 스테일 가드(`useRef` 로 요청 id 대조) — 실인증/라우팅 정리 스토리에서 함께. [frontend/app/staff/patients/[id]/page.tsx:78-79]
+
 ## Deferred from: code review of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
 
 - **fetch-or-404 블록 4-소스** — `fetch_appointment` + 404 "예약을 찾을 수 없어요." 패턴이 4곳(services/appointments.py의 set_appointment_status·set_appointment_doctor·get_appointment, services/medical_records.py) — 3.1이 만든 `get_appointment`(또는 `_fetch_appointment_or_404` 헬퍼)로 3곳 수렴 가능. 문구가 계약 테스트로 고정돼 있어 일괄 정리 스토리에서. [backend/app/services/appointments.py:88-90·121·157, backend/app/services/medical_records.py:35]
