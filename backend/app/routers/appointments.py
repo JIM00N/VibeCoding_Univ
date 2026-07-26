@@ -24,14 +24,17 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
 
 
 @router.get("/appointments", response_model=list[AppointmentOut])
-def list_appointments(patient_id: int | None = None) -> list[AppointmentOut]:
+def list_appointments(
+    patient_id: int | None = None, doctor_id: int | None = None
+) -> list[AppointmentOut]:
     """예약 목록(정규 모델 리스트).
 
-    - patient_id 없음: 직원 전체 목록(FR-7, 최신순) — 기존 계약 그대로(회귀 없음).
+    - 파라미터 없음: 직원 전체 목록(FR-7, 최신순) — 기존 계약 그대로(회귀 없음).
     - ?patient_id=: 그 환자의 예약만(Story 4.1, FR-11·AD-8, reserved_at desc). 앱 레벨 필터·보안 아님.
+    - ?doctor_id=: 그 의사에게 배정된 예약만(Story 6.1, FR-17·AD-8, reserved_at desc). 앱 레벨 필터·보안 아님.
     슬롯 충돌/점유는 Epic 5.
     """
-    return appointments_service.list_appointments(patient_id)
+    return appointments_service.list_appointments(patient_id, doctor_id)
 
 
 @router.get("/appointments/{appointment_id}", response_model=AppointmentOut)

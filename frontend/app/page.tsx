@@ -30,7 +30,7 @@ export default function Home() {
         <p className="text-muted-foreground">어떤 역할로 이용하실지 골라 주세요.</p>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Button size="lg" className="h-24 text-lg" onClick={() => router.push("/patient")}>
           환자
         </Button>
@@ -41,6 +41,15 @@ export default function Home() {
           onClick={() => router.push("/staff")}
         >
           직원
+        </Button>
+        {/* 의사 역할(FR-1, Story 6.1) — 환자/직원과 구분되는 outline 톤. 의사 신원 선택으로 이어진다. */}
+        <Button
+          size="lg"
+          variant="outline"
+          className="h-24 text-lg"
+          onClick={() => router.push("/doctor")}
+        >
+          의사
         </Button>
       </div>
 

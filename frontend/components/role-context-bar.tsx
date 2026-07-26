@@ -9,8 +9,10 @@ export function RoleContextBar({
   role,
   patientName,
   patientAction = "switch",
+  doctorName,
+  doctorAction = "switch",
 }: {
-  role: "환자" | "직원";
+  role: "환자" | "직원" | "의사";
   patientName?: string;
   /**
    * 선택 환자가 있을 때 제공할 신원 액션. 이름 표시와 **분리**돼 있다 —
@@ -20,6 +22,14 @@ export function RoleContextBar({
    * - "none": 액션 없음
    */
   patientAction?: "switch" | "back" | "none";
+  /**
+   * 선택 의사가 있을 때 제공할 신원 액션(Story 6.1 — patientAction 미러). 환자와 대칭 구조:
+   * - "switch": 다른 의사로 전환(→ /doctor/select) — 의사 대시보드 기본값
+   * - "back": 의사 대시보드로 복귀(→ /doctor) — 신원 선택 화면에서 되돌아갈 때
+   * - "none": 액션 없음
+   */
+  doctorName?: string;
+  doctorAction?: "switch" | "back" | "none";
 }) {
   return (
     <header className="sticky top-0 z-10 flex items-center justify-between border-b bg-background/95 px-6 py-3 backdrop-blur">
@@ -31,6 +41,9 @@ export function RoleContextBar({
         </span>
         {patientName ? (
           <span className="text-muted-foreground">· {patientName}님</span>
+        ) : null}
+        {doctorName ? (
+          <span className="text-muted-foreground">· {doctorName} 선생님</span>
         ) : null}
       </div>
       <div className="flex items-center gap-1">
@@ -45,6 +58,20 @@ export function RoleContextBar({
         ) : null}
         {patientName && patientAction === "back" ? (
           <Link href="/patient" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            돌아가기
+          </Link>
+        ) : null}
+        {/* 의사 신원 액션 — 환자와 대칭(이름 표시와 독립). */}
+        {doctorName && doctorAction === "switch" ? (
+          <Link
+            href="/doctor/select"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            다른 의사
+          </Link>
+        ) : null}
+        {doctorName && doctorAction === "back" ? (
+          <Link href="/doctor" className={buttonVariants({ variant: "ghost", size: "sm" })}>
             돌아가기
           </Link>
         ) : null}

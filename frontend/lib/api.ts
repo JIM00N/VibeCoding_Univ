@@ -188,6 +188,14 @@ export const api = {
     return Array.isArray(data) ? data : [];
   },
 
+  /** 전체 의사 목록(Story 6.1, FR-1b). 진료과 무관 — 의사 신원 선택 화면(/doctor/select)이 이 목록에서
+   *  본인을 고른다. 백엔드 `/doctors`(무필터)가 전체를 반환한다(기존 계약 — getDoctors 시그니처는 동결). */
+  getAllDoctors: async (): Promise<Doctor[]> => {
+    const data = await request<Doctor[]>("/doctors");
+    // 다른 조회와 동일하게 비배열 응답을 방어(화면이 무한 로딩/크래시에 빠지지 않게).
+    return Array.isArray(data) ? data : [];
+  },
+
   /** 약 목록(FR-10, Story 3.2). 진료 기록 폼의 처방 행 약 드롭다운을 채운다(시드 전용 참조 데이터). */
   getDrugs: async (): Promise<Drug[]> => {
     const data = await request<Drug[]>("/drugs");
@@ -216,6 +224,16 @@ export const api = {
   getAppointmentsByPatient: async (patientId: number): Promise<Appointment[]> => {
     const data = await request<Appointment[]>(
       `/appointments?patient_id=${encodeURIComponent(String(patientId))}`,
+    );
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** 의사 대시보드 예약 목록(Story 6.1, FR-17·AD-8). ?doctor_id= 로 그 의사에게 배정된 예약만 받는다
+   *  (최근순). 활성(대기·확정)/완료 분류는 화면이 status 로 나눈다. 앱 레벨 필터일 뿐 보안 격리가 아니다
+   *  (AD-8). 없으면 빈 배열(404 아님 — 목록 계약). getAppointmentsByPatient 미러. */
+  getAppointmentsByDoctor: async (doctorId: number): Promise<Appointment[]> => {
+    const data = await request<Appointment[]>(
+      `/appointments?doctor_id=${encodeURIComponent(String(doctorId))}`,
     );
     return Array.isArray(data) ? data : [];
   },
