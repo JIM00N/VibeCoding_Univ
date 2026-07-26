@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-26 # Story 6.3 done → **epic-6 done**. P0 관통(Epic 1–4) + P0.5(Epic 6) 완료. 남은 것: Epic 5(P1 가용성·자동배정·walk-in), epic-6 회고(optional)
+last_updated: 2026-07-26 # epic-6 done + 회고 완료(액션 6건). 다음: 환경 셋업 문서(액션 #4) → Story 5.1 create-story(범위 확장 반영) → 5.1 완료 직후 중복 사본 정리 스토리
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -90,7 +90,7 @@ development_status:
   6-1-3역할-진입-의사-대시보드: done # PR #18 머지(f7fb45d)·배포·라이브 실측(?doctor_id= 필터·/doctor 200) 완료. 코드리뷰 Patch 3 반영·Defer 1
   6-2-직원-좌측-사이드바-셸: done # PR #19 머지(4dae1b1)·Vercel 배포·라이브 실측(/staff→예약관리·하단 탭 바·환자/의사/공유폼 셸 0) 완료. 코드리뷰 반영(드로어→하단 탭 바)
   6-3-직원-대리-예약: done # PR #20 머지(72f68d9)·Vercel 배포·라이브 실측(대리 예약 생성→목록 대기 반영, 콘솔 0) 완료. 코드리뷰 Patch 16·Defer 3·Dismiss 2(High 2건: 지난 슬롯 예약 가능·진료과 재선택 데드락, 둘 다 재현 후 수정). 검증 예약 42·43·44·45 원복
-  epic-6-retrospective: optional
+  epic-6-retrospective: done # 2026-07-26 회고 완료 (epic-6-retro-2026-07-26.md) — 액션 6건. 유의미한 발견: 5.1 범위 확장(대리 예약=3번째 쓰기 경로·taken 표시 2화면)
 
 # Retrospective action items (Epic 1 회고 2026-07-19 · Epic 2 회고 2026-07-23)
 action_items:
@@ -113,7 +113,7 @@ action_items:
   - epic: 1
     action: "검증용 테스트 환자 12명 정리 검토 (Epic 2 시연 전)"
     owner: "지석"
-    status: open
+    status: done # 2026-07-26 Epic 6 회고서 확인 — 2026-07-23 cleanup 에서 테스트 환자 9명 삭제·시드 보존 완료(추적만 open 으로 남아 있었음)
   - epic: 1
     action: "deferred-work 13건을 처리 시점(Epic)별로 태깅"
     owner: "지석"
@@ -145,4 +145,30 @@ action_items:
   - epic: 3
     action: "P0 관통(Epic 4 done) 후 중복 사본 정리 스토리 — fetch-or-404 4사본·CAS 409 문구 3사본·ensure_utc 공유 헬퍼·ErrorState 4곳 이관 (정식 스토리 Task로 내장, 회고 교훈 2 적용)"
     owner: "지석"
+    status: open # 2026-07-26 Epic 6 회고: 착수 조건(Epic 4 done)은 충족됐으나 미실행 — Epic 6 액션 #5 에서 "Epic 5.1 완료 직후"로 시점 재확정(조건부 → 순서 고정)
+
+  # Epic 6 회고 액션 (2026-07-26, epic-6-retro-2026-07-26.md)
+  - epic: 6
+    action: "실측 시나리오에 '시간 경과 · 같은 값 재선택' 필수 포함 — 폼·선택 위젯 스토리는 스토리 파일 실측 체크리스트에 명시 (6.3 High 2건이 정확히 그 둘)"
+    owner: "지석(create-story·dev)"
+    status: open
+  - epic: 6
+    action: "컴포넌트 '수명(mount lifetime)'을 설계 결정으로 명시 — 항상 마운트 vs 열 때 마운트를 create-story 에서 정하고 시각 계산·상태 초기화·네트워크 호출 영향까지 기록"
+    owner: "지석(create-story)"
+    status: open
+  - epic: 6
+    action: "폼·상태 스토리는 리뷰 예산 상향 — 조회/레이아웃과 동일 배분 금지, High 후보는 재현 우선"
+    owner: "지석"
+    status: open
+  - epic: 6
+    action: "환경 셋업 문서 1페이지 마감 (Epic 2 #3 → Epic 3 #2 승계, 3에픽 연속) — .env 절차 + aws-1 Session 풀러 사유 + psql 없는 환경의 DB 직접 접속·원복 방법. Epic 5.1 착수 전까지"
+    owner: "지석(개발)"
+    status: open
+  - epic: 6
+    action: "중복 사본 정리 스토리 — 시점 재확정: Epic 5.1 완료 직후 (booking-slots 2-소스·orDash 3사본·formatReservedAt 2-소스·fetch-or-404 4사본·ensure_utc·ErrorState 4곳)"
+    owner: "지석"
+    status: open
+  - epic: 6
+    action: "5.1 create-story 에 범위 확장 반영 — 대리 예약을 쓰기 경로에 명시 · taken 표시 2화면(또는 slot-picker 확장 결정) · 과거 시각 가드와 충돌 가드 배치 정리"
+    owner: "지석(create-story)"
     status: open
