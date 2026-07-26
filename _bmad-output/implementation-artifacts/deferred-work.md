@@ -1,8 +1,15 @@
 # Deferred Work
 
+## Deferred from: code review of 6-3-직원-대리-예약 (2026-07-26)
+
+- **환자 검색이 페이징 없이 전체 환자를 조회·렌더** — `GET /patients`(`backend/app/db/patients.py:22-26`)에 `LIMIT`이 없고 `lib/api.ts:174-180`에도 페이징이 없어, 대리 예약 다이얼로그를 열 때마다 전체 환자 표를 받아 `max-h-48` 스크롤러 안에 전량 `<button>`으로 렌더한다. 시드 3명 규모에선 무해하나 실제 규모에선 매 열림마다 전량 전송 + DOM 수백 노드. 처리 시 서버 `LIMIT`+검색어 필수화 또는 무한 스크롤. [frontend/components/proxy-booking-dialog.tsx (환자 검색), backend/app/db/patients.py]
+- **검색 0건에서 [신규 환자 등록]으로 이탈하면 나머지 입력이 소실되고 복귀 경로가 없음** — 다이얼로그를 벗어나 `/staff/patients/new`로 이동하면 컴포넌트가 언마운트돼 진료과·의사·날짜·시간 선택이 사라지고, 등록 성공 후에도 그 화면에 머물러(`app/staff/patients/new/page.tsx`) 예약 화면으로 돌려보내지 않는다. 환자를 폼 첫 필드로 둔 설계가 피해를 줄이지만(보통 다른 값 입력 전에 이탈) 완전 해소는 아니다. 근본 해결은 다이얼로그 안 인라인 환자 등록(모달 2단계 — UX-DR6 위배)이나 복귀 쿼리(`?returnTo=`). [frontend/components/proxy-booking-dialog.tsx (0건 안내 링크)]
+- **환자 선택·[변경] 시 포커스가 `document.body`로 떨어짐** — 선택 시 검색 블록이 요약 블록으로 통째 교체되는데 포커스 인계가 없어, 키보드 사용자의 다음 Tab이 다이얼로그 처음부터 다시 시작한다. 처리 시 선택 후 [변경] 버튼(또는 진료과 트리거)에 `focus()` 인계. [frontend/components/proxy-booking-dialog.tsx (selectPatient / [변경])]
+
 ## Deferred from: 6-3-직원-대리-예약 (2026-07-26, 구현 중 의도적 중복)
 
 - **예약 슬롯 헬퍼 2-소스** — 6.3이 서울 고정 30분 슬롯 헬퍼(`seoulDayOptions`·`slotsForSeoulDay`·`formatSeoulDayLabel`)를 `frontend/lib/booking-slots.ts` 로 새로 만들었으나, 2.1의 로컬 사본 `frontend/app/patient/book/page.tsx:28-99` 를 import 로 이관하지 않았다. 두 정의는 같은 계산(+09:00 고정 오프셋·분 ∈ {0,30})이라 출력 정합 문제는 없고, 환자 예약 화면 동결(add-only 규율) 때문에 손대지 않았다. 정리하려면 book 화면이 `@/lib/booking-slots` 를 import 하도록 교체하면 된다 — `formatReservedAt` 2-소스(2.2 deferred)와 같은 처리·같은 정리 스토리(Epic 3 회고 액션 #2) 대상. [frontend/lib/booking-slots.ts ↔ frontend/app/patient/book/page.tsx:28-99]
+- **`orDash` 3번째 사본** — `frontend/components/proxy-booking-dialog.tsx`가 `app/staff/patients/page.tsx:35-37`의 nullable 표시 헬퍼를 로컬 복제했다(4.2 상세 화면 사본에 이은 3번째). 4줄짜리 순수 함수라 위험은 없지만, 중복 사본 정리 스토리(Epic 3 회고 액션 #2)가 알 수 있게 기록한다. `lib/format.ts`로 이관이 자연스럽다. [frontend/components/proxy-booking-dialog.tsx ↔ frontend/app/staff/patients/page.tsx:35-37]
 - **`patient/book` 슬롯 그룹 라벨의 짝 없는 `<label>`** — 2.1이 슬롯 radiogroup 제목을 `htmlFor` 없는 `<Label id="slot-label">`(실제 `<label>` 엘리먼트)로 렌더해 Chrome DevTools a11y 이슈 "No label associated with a form field"가 뜬다(6.3 구현 중 같은 패턴을 복사했다가 실측에서 발견 → 6.3은 `<span id>`+`aria-labelledby` 로 수정). radiogroup 접근 이름은 `aria-labelledby` 로 정상 제공되므로 기능·SR 영향은 없고 이슈 표시만 남는다. book 화면 동결이라 이관 보류 — 위 헬퍼 정리와 함께 처리. [frontend/app/patient/book/page.tsx:402]
 
 ## Deferred from: code review of 6-1-3역할-진입-의사-대시보드 (2026-07-26)
