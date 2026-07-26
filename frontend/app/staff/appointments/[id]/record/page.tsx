@@ -6,8 +6,8 @@
 // 대상 예약이 확정일 때만 폼을 보여준다 — URL 직접 진입 등 비확정이면 안내만(Component Patterns).
 // 처방 행(0..N, FR-10 Story 3.2)은 같은 <form> 안 — 저장 시 기록·완료 전이와 한 트랜잭션으로 저장된다.
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
@@ -26,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { api, type Appointment, type Drug } from "@/lib/api";
+import { useDoctorIdentity } from "@/lib/doctor-identity";
 import { formatReservedAt } from "@/lib/format";
 
 // 처방 행 폼 상태. key 는 증가 카운터 — 배열 index 를 key 로 쓰면 중간 삭제 시 입력값이 밀린다.
@@ -38,8 +39,14 @@ type RxRow = {
   daysError: string | null;
 };
 
-export default function MedicalRecordNewPage() {
+function MedicalRecordNewInner() {
   const router = useRouter();
+  // ?from=doctor 면 의사 대시보드에서 온 재사용 진입(Story 6.1, 채택안 B) — 폼·도메인 로직은 그대로,
+  // 역할 바만 의사판으로·복귀 경로만 /doctor 로 돌린다. 무쿼리(직원 진입)는 기존 동작 그대로(회귀 0).
+  const searchParams = useSearchParams();
+  const fromDoctor = searchParams.get("from") === "doctor";
+  const { doctor } = useDoctorIdentity();
+  const listHref = fromDoctor ? "/doctor" : "/staff/appointments";
   // 첫 동적 라우트([id]) — 클라이언트 페이지는 useParams 로 세그먼트를 읽는다(로컬 Next docs).
   const params = useParams<{ id: string }>();
   const appointmentId = Number(params.id);
@@ -178,9 +185,12 @@ export default function MedicalRecordNewPage() {
       // 처방 0건이면 기존대로 목록 복귀 — 목록이 재조회되며 해당 예약 배지가 완료로 표시된다.
       // 두 경로 모두 성공 시 submitting 을 풀지 않는다 — 내비게이션까지 비활성 유지(이중 제출 창 제거).
       if (checked.length > 0) {
-        router.push(`/staff/appointments/${appt.id}/prescription`);
+        // 의사 흐름이면 처방전 화면도 ?from=doctor 로 이어 복귀가 /doctor 로 유지되게 한다.
+        router.push(
+          `/staff/appointments/${appt.id}/prescription${fromDoctor ? "?from=doctor" : ""}`,
+        );
       } else {
-        router.push("/staff/appointments");
+        router.push(listHref);
       }
     } catch (err) {
       // 확정 아님(400)·기록 중복(409)·경합(409)·없는 약(400) 등은 request 가 4xx 한국어로 던진다(AD-10).
@@ -197,7 +207,14 @@ export default function MedicalRecordNewPage() {
 
   return (
     <>
-      <RoleContextBar role="직원" />
+      {/* ?from=doctor 면 역할 바를 의사판으로(Story 6.1) — 아니면 기존 직원 바(회귀 0).
+          작성 중 폼이라 doctorAction="none": 바에 "다른 의사"(→/doctor/select) 링크를 두지 않는다
+          (입력 중 신원 전환은 미저장 입력을 조용히 버리는 함정 — 이탈은 취소/역할 바꾸기로 충분). */}
+      {fromDoctor ? (
+        <RoleContextBar role="의사" doctorName={doctor?.name} doctorAction="none" />
+      ) : (
+        <RoleContextBar role="직원" />
+      )}
       <main className="mx-auto w-full max-w-2xl px-6 py-8">
         <h1 className="text-[28px] font-bold leading-tight">진료 기록 작성</h1>
         <p className="mt-2 text-muted-foreground">
@@ -206,19 +223,19 @@ export default function MedicalRecordNewPage() {
 
         <div className="mt-6">
           {!validId ? (
-            <NoticeState message="예약을 찾을 수 없어요." onBack={() => router.push("/staff/appointments")} />
+            <NoticeState message="예약을 찾을 수 없어요." onBack={() => router.push(listHref)} />
           ) : loading ? (
             <FormSkeleton />
           ) : loadError ? (
             <ErrorState
               message={loadError}
               onRetry={() => setReloadNonce((n) => n + 1)}
-              onBack={() => router.push("/staff/appointments")}
+              onBack={() => router.push(listHref)}
             />
           ) : notConfirmed ? (
             <NoticeState
               message="확정된 예약에만 진료 기록을 작성할 수 있어요."
-              onBack={() => router.push("/staff/appointments")}
+              onBack={() => router.push(listHref)}
             />
           ) : appt ? (
             <>
@@ -454,7 +471,7 @@ export default function MedicalRecordNewPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={() => router.push("/staff/appointments")}
+                    onClick={() => router.push(listHref)}
                     disabled={submitting}
                   >
                     취소
@@ -518,5 +535,23 @@ function NoticeState({ message, onBack }: { message: string; onBack: () => void 
         </Button>
       </div>
     </div>
+  );
+}
+
+// useSearchParams(?from=doctor)는 Suspense 경계가 필요하다(Next 16 — build 프리렌더 규칙).
+// 폴백에도 역할 바를 둔다 — 하드 로드/새로고침 시 스티키 바가 사라지지 않게(이 페이지의 대다수
+// 하드 로드는 직원이라 role="직원"이 정합; 의사 하드 진입은 Link 경유라 폴백이 거의 안 보인다).
+export default function MedicalRecordNewPage() {
+  return (
+    <Suspense
+      fallback={
+        <>
+          <RoleContextBar role="직원" />
+          <main className="mx-auto w-full max-w-2xl px-6 py-8" aria-busy="true" />
+        </>
+      }
+    >
+      <MedicalRecordNewInner />
+    </Suspense>
   );
 }

@@ -6,8 +6,8 @@
 // 출력은 "행위"가 이력을 만든다: [처방전 출력] → 서버가 now() 기록(POST …/print) → 갱신 반영 → window.print().
 // 인쇄물엔 시트 Card 하나만 남는다(비시트 요소는 print:hidden). 서버는 lib/api.ts 만 통해 호출(AD-1).
 
-import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
@@ -17,10 +17,18 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Appointment, type MedicalRecord } from "@/lib/api";
+import { useDoctorIdentity } from "@/lib/doctor-identity";
 import { formatReservedAt } from "@/lib/format";
 
-export default function PrescriptionPage() {
+function PrescriptionInner() {
   const router = useRouter();
+  // ?from=doctor 면 의사 대시보드에서 기록 저장 직행(처방 ≥1건)으로 이어진 진입(Story 6.1) —
+  // 역할 바·복귀 경로만 의사판으로 돌린다(도메인 무변경). 무쿼리(직원 진입)는 기존 동작 그대로(회귀 0).
+  // (의사 대시보드 완료행엔 [처방전] 점프오프가 없다 — 3.3/직원 소유, 설계결정 7. 이 경로는 저장 직행뿐.)
+  const searchParams = useSearchParams();
+  const fromDoctor = searchParams.get("from") === "doctor";
+  const { doctor } = useDoctorIdentity();
+  const listHref = fromDoctor ? "/doctor" : "/staff/appointments";
   // 동적 라우트([id]) — 클라이언트 페이지는 useParams 로 세그먼트를 읽는다(기록 페이지 미러).
   const params = useParams<{ id: string }>();
   const appointmentId = Number(params.id);
@@ -89,16 +97,21 @@ export default function PrescriptionPage() {
     }
   }
 
-  const backToList = () => router.push("/staff/appointments");
+  const backToList = () => router.push(listHref);
   const printedText = record?.prescription_printed_at
     ? `마지막 출력: ${formatReservedAt(record.prescription_printed_at)}`
     : "아직 출력하지 않았어요.";
 
   return (
     <>
-      {/* 역할 바 — 인쇄엔 포함하지 않는다(래퍼 div 로 숨김, 하드닝 컴포넌트 무수정). */}
+      {/* 역할 바 — 인쇄엔 포함하지 않는다(래퍼 div 로 숨김, 하드닝 컴포넌트 무수정).
+          ?from=doctor 면 의사판(Story 6.1) — 아니면 기존 직원 바(회귀 0). */}
       <div className="print:hidden">
-        <RoleContextBar role="직원" />
+        {fromDoctor ? (
+          <RoleContextBar role="의사" doctorName={doctor?.name} />
+        ) : (
+          <RoleContextBar role="직원" />
+        )}
       </div>
       <main className="mx-auto w-full max-w-2xl px-6 py-8">
         {/* 페이지 제목 블록 — 시트 내부 문서 헤더와 중복 인쇄를 막기 위해 화면 전용. */}
@@ -229,5 +242,25 @@ function NoticeState({ message, onBack }: { message: string; onBack: () => void 
         </Button>
       </div>
     </div>
+  );
+}
+
+// useSearchParams(?from=doctor)는 Suspense 경계가 필요하다(Next 16 — build 프리렌더 규칙).
+// 폴백에도 역할 바를 둔다 — 하드 로드 시 스티키 바가 사라지지 않게(대다수 하드 로드는 직원이라
+// role="직원"이 정합; 인쇄엔 안 나오게 print:hidden 유지).
+export default function PrescriptionPage() {
+  return (
+    <Suspense
+      fallback={
+        <>
+          <div className="print:hidden">
+            <RoleContextBar role="직원" />
+          </div>
+          <main className="mx-auto w-full max-w-2xl px-6 py-8" aria-busy="true" />
+        </>
+      }
+    >
+      <PrescriptionInner />
+    </Suspense>
   );
 }

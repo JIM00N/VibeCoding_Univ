@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of 6-1-3역할-진입-의사-대시보드 (2026-07-26)
+
+- **재배정된 의사 신원의 1프레임 교차-의사 데이터 플래시** — `/doctor` 대시보드의 예약 로드 effect(`getAppointmentsByDoctor(doctor.id)`)와 신원 서버 대조 effect(`getAllDoctors()` → 불일치 시 `clearDoctor()`+redirect)가 `ready && doctor` 만으로 병렬 실행되고 서로 순서가 없다. 재시드로 저장된 id 가 **다른 의사**에게 재할당된 상태에서 로드가 대조보다 먼저 resolve 하면, 리다이렉트 전 1프레임 동안 남의 예약 목록(다른 환자 이름)이 렌더된다. 환자 홈(`/patient`)은 데이터를 안 불러 이 구멍이 없었으나, 6.1 이 홈+목록을 한 화면(대시보드)으로 합치며 재노출됐다. **도달성 낮음**(재시드 id 재할당 전제)·**자기수정**(대조가 곧 redirect)·**AD-8 데모 모델**(앱 레벨 스코핑은 보안 격리가 아님 — 명시)이라 4.1/4.2 가 동일류 1프레임 스테일을 defer 한 선례를 계승한다. 근본 해결은 실인증·서버측 신원 바인딩(P0 스코프 밖) 또는 로드를 대조 통과 뒤로 시퀀싱(verified 게이트). [frontend/app/doctor/page.tsx (로드 effect ↔ 대조 effect 레이스)]
+
 ## Deferred from: code review of 4-2-직원-환자별-전체-진료-내역-조회 (2026-07-26)
 
 - **상세→상세 직접 이동 시 1프레임 스테일 렌더** — `/staff/patients/[id]` 는 `setLoading(true)`·환자/오류/부재 세팅을 전부 `setTimeout(…, 0)` 콜백 안에서 하므로(React 19 린트 회피), 같은 컴포넌트 인스턴스로 다른 환자 상세로 **직접** 이동(주소창 편집·브라우저 뒤로/앞으로)하면 `patientId` 는 즉시 바뀌어 리렌더되지만 `loading`/`patient`/`error`/`notFound` 는 타이머 발화 전이라 **1프레임 동안 이전 환자 데이터(또는 스테일 ErrorState/NotFound)가 새 URL 아래** 보인다. 도달성 낮음(앱에 상세→상세 링크가 없어 목록 경유가 정상 경로)·자기수정(타이머 0ms). 4.1 이 동일류 1프레임 스테일(탭 간 신원 교체)을 defer 한 선례를 계승. 근본 해결은 컴포넌트 `key={id}` 리마운트 또는 스테일 가드(`useRef` 로 요청 id 대조) — 실인증/라우팅 정리 스토리에서 함께. [frontend/app/staff/patients/[id]/page.tsx:78-79]

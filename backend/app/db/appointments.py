@@ -73,6 +73,25 @@ _SELECT_APPOINTMENTS_BY_PATIENT = """
     order by a.reserved_at desc, a.id desc
 """
 
+# 의사 대시보드 예약 목록(Story 6.1, FR-17·AD-8) — _SELECT_APPOINTMENTS_BY_PATIENT 의 표시 조인을
+# 그대로 미러하고 `where a.doctor_id = %s` 로 그 의사에게 배정된 예약만 필터한다(앱 레벨 필터, 보안
+# 아님 — 데모 고지). 활성/완료 분류는 프런트가 status 로 나눈다(신규 서버 필터 없음, FR-17). 정렬은
+# reserved_at desc(환자용 목록과 동일 시간순 가독성). 표시 조인 SQL 사본 규약: 기존 5사본과 같은
+# 의도적 컨벤션 — 공유 fragment 추출은 deferred(정리 스토리 몫).
+_SELECT_APPOINTMENTS_BY_DOCTOR = """
+    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from public.appointment a
+    join public.patient p               on p.id  = a.patient_id
+    join public.hospital_department hd  on hd.id = a.hospital_department_id
+    join public.department d            on d.id  = hd.department_id
+    left join public.doctor doc         on doc.id = a.doctor_id
+    where a.doctor_id = %s
+    order by a.reserved_at desc, a.id desc
+"""
+
 # 예약 단건 조회(상태 전이 전 현재 status·존재 확인용). 없으면 fetchone() 이 None → 서비스가 404.
 _SELECT_APPOINTMENT_BY_ID = """
     select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
@@ -184,6 +203,18 @@ def fetch_appointments_by_patient(patient_id: int) -> list[dict[str, Any]]:
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(_SELECT_APPOINTMENTS_BY_PATIENT, (patient_id,))
+            return cur.fetchall()
+
+
+def fetch_appointments_by_doctor(doctor_id: int) -> list[dict[str, Any]]:
+    """한 의사에게 배정된 예약 목록(dict 리스트)을 반환한다 — 의사 대시보드(Story 6.1, FR-17·AD-8).
+
+    필터드 목록이라 없으면 빈 리스트다(404 아님 — 목록 계약). 최근 예약순(reserved_at desc).
+    활성(대기·확정)/완료 분류는 프런트가 한다(신규 서버 status 필터 없음). 파라미터화 SQL(injection 방지).
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(_SELECT_APPOINTMENTS_BY_DOCTOR, (doctor_id,))
             return cur.fetchall()
 
 

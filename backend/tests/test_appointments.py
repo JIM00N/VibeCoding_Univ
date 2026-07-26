@@ -373,6 +373,73 @@ def test_list_appointments_without_patient_id_uses_full_list(monkeypatch):
     assert resp.json()[0]["id"] == 11
 
 
+# --- Story 6.1: GET /appointments?doctor_id= (의사 대시보드 스코핑) -------------
+# 4.1 의 ?patient_id= 테스트 미러. 의사판 앱 레벨 필터(AD-8, 보안 아님).
+
+
+def test_list_appointments_by_doctor_filters_and_returns_flat_list(monkeypatch):
+    # AC2: ?doctor_id= 이면 그 의사용 fetch 를 그 인자로 호출하고 flat 정규 리스트를 반환한다.
+    # 직원 전체 fetch·환자용 fetch 는 호출되면 안 된다(경로 분기 회귀 가드).
+    captured: dict = {}
+
+    def fake_by_doctor(doctor_id):
+        captured["doctor_id"] = doctor_id
+        return [_fake_row(id=31, doctor_id=doctor_id, status="확정")]
+
+    monkeypatch.setattr(appointments_db, "fetch_appointments_by_doctor", fake_by_doctor)
+    monkeypatch.setattr(appointments_db, "fetch_appointments", _fail)
+    monkeypatch.setattr(appointments_db, "fetch_appointments_by_patient", _fail)
+
+    client = TestClient(app)
+    resp = client.get("/appointments", params={"doctor_id": 3})
+
+    assert resp.status_code == 200
+    assert captured["doctor_id"] == 3
+    data = resp.json()
+    assert isinstance(data, list) and len(data) == 1
+    # AD-10: flat 정규 모델 — 직원·환자 목록과 같은 키셋(리소스당 응답 모델 1개).
+    assert set(data[0].keys()) == {
+        "id",
+        "patient_id",
+        "hospital_department_id",
+        "doctor_id",
+        "reserved_at",
+        "status",
+        "patient_name",
+        "doctor_name",
+        "department_name",
+    }
+    assert data[0]["doctor_id"] == 3
+
+
+def test_list_appointments_by_doctor_empty_returns_200_empty_list(monkeypatch):
+    # 배정 예약 없는 의사는 빈 목록 200(404 아님 — 목록 계약). 프런트가 빈 상태로 해석한다(AC4).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointments_by_doctor", lambda did: []
+    )
+    monkeypatch.setattr(appointments_db, "fetch_appointments", _fail)
+
+    client = TestClient(app)
+    resp = client.get("/appointments", params={"doctor_id": 999})
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_appointments_without_doctor_id_uses_full_list(monkeypatch):
+    # 회귀: doctor_id 없으면 기존 직원 전체 fetch 를 쓰고, 의사용 fetch 는 호출되면 안 된다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointments", lambda: [_fake_row(id=11)]
+    )
+    monkeypatch.setattr(appointments_db, "fetch_appointments_by_doctor", _fail)
+
+    client = TestClient(app)
+    resp = client.get("/appointments")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["id"] == 11
+
+
 # --- Story 2.2: PATCH /appointments/{id} (상태 전이 확정/취소) ------------------
 
 
