@@ -31,7 +31,10 @@ export default function Home() {
       </header>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Button size="lg" className="h-24 text-lg" onClick={() => router.push("/patient")}>
+        {/* 환자는 역할 선택에서 항상 신원 선택을 먼저 거친다(IA: 역할선택→환자→신원 선택).
+            저장된 신원이 있어도 선택 화면이 "지금은 ○○님으로 보고 있어요" 안내와 함께 온다 —
+            /patient 직접 진입·새로고침의 컨텍스트 유지(UX-DR4)는 그대로다. */}
+        <Button size="lg" className="h-24 text-lg" onClick={() => router.push("/patient/select")}>
           환자
         </Button>
         <Button
