@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-27 # 5.1 dev-story 구현 완료 → review. 다음: Codex+3층 코드리뷰(폼·상태 스토리 리뷰 예산 상향) → PR → 5.1 done 직후 중복 사본 정리 스토리
+last_updated: 2026-07-27 # 5.1 done(커밋+배포+라이브). 다음: 중복 사본 정리 스토리(Epic 6 액션 #5 — 5.1 완료 직후로 못 박힘) → 5.2 자동 배정
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -80,7 +80,7 @@ development_status:
 
   # Epic 5: 가용성 안전장치 & Walk-in (P1 — 관통 후 얹기)
   epic-5: in-progress # 2026-07-27 첫 스토리 5.1 create-story로 전환
-  5-1-가용성-충돌-검사: review # 2026-07-27 코드리뷰 완료(4층: Codex+Blind+Edge+Auditor) — Patch 10 전부 반영·pytest 116·실 DB 재실증. PR 머지(사용자 승인)→배포·라이브 확인 남음
+  5-1-가용성-충돌-검사: done # PR #21 머지(917f877)·Railway/Vercel 배포·라이브 실측(충돌 409·taken 렌더·콘솔 0) 완료. 코드리뷰 4층 Patch 10·Defer 2·Dismiss 3. 검증 예약 전량 원복
   5-2-의사-자동-배정: backlog
   5-3-walk-in-즉시-진료: backlog
   epic-5-retrospective: optional
