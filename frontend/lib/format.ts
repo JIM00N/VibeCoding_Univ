@@ -16,3 +16,9 @@ export function formatReservedAt(iso: string): string {
     minute: "2-digit",
   });
 }
+
+/** nullable 표시 필드는 비어 있으면 —(대시). 1.4 환자 목록에서 시작된 표기 규약 —
+ *  4화면 사본을 여기로 수렴한 정본(Story 5.4). */
+export function orDash(value: string | null): string {
+  return value && value.trim() ? value : "—";
+}

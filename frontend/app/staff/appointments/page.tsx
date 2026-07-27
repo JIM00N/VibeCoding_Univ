@@ -14,6 +14,7 @@ import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
 import { CategoryBadge } from "@/components/category-badge";
+import { ErrorState } from "@/components/error-state";
 import { ProxyBookingDialog } from "@/components/proxy-booking-dialog";
 import { RoleContextBar } from "@/components/role-context-bar";
 import {
@@ -507,20 +508,6 @@ function ListSkeleton() {
       {Array.from({ length: 5 }).map((_, i) => (
         <Skeleton key={i} className="h-12 w-full rounded-lg" />
       ))}
-    </div>
-  );
-}
-
-// 조회 오류 상태 — 빈 상태와 구분해 "다시 시도"를 제공(백엔드 다운을 "예약 없음"으로 오인 방지).
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed py-16 text-center">
-      <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4">
-        <Button variant="outline" onClick={onRetry}>
-          다시 시도
-        </Button>
-      </div>
     </div>
   );
 }

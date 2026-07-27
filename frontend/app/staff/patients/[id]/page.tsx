@@ -27,17 +27,13 @@ import {
 } from "@/components/ui/table";
 import { api, type Appointment, type MedicalRecord, type Patient } from "@/lib/api";
 import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
-import { formatReservedAt } from "@/lib/format";
+import { formatReservedAt, orDash } from "@/lib/format";
 
 // 성별 역매핑·nullable 대시 — 목록 페이지의 표시 규약과 동일(작은 지역 헬퍼, 공유 추출은 정리 스토리 몫).
 const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
 function genderText(gender: string | null): string {
   return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
 }
-function orDash(value: string | null): string {
-  return value && value.trim() ? value : "—";
-}
-
 // 진료과·담당 의사 색 배지(2.4) — 예약 섹션에서 재사용(staff/appointments 렌더 미러).
 function renderDepartment(appt: Appointment) {
   return (

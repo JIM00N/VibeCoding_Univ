@@ -11,6 +11,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
+import { ErrorState } from "@/components/error-state";
 import { RoleContextBar } from "@/components/role-context-bar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -494,32 +495,6 @@ function FormSkeleton() {
       <Skeleton className="h-10 w-full rounded-lg" />
       <Skeleton className="h-24 w-full rounded-lg" />
       <Skeleton className="h-10 w-40 rounded-lg" />
-    </div>
-  );
-}
-
-// 조회 오류 상태 — "다시 시도" 제공(백엔드 다운을 "작성 불가"로 오인하지 않게 안내와 구분).
-// 목록 복귀 경로도 함께 — 404(삭제된 예약·오래된 링크)는 재시도가 영원히 실패하므로 탈출구 필수.
-function ErrorState({
-  message,
-  onRetry,
-  onBack,
-}: {
-  message: string;
-  onRetry: () => void;
-  onBack: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-dashed py-16 text-center">
-      <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4 flex justify-center gap-3">
-        <Button variant="outline" onClick={onRetry}>
-          다시 시도
-        </Button>
-        <Button variant="ghost" onClick={onBack}>
-          예약 목록으로
-        </Button>
-      </div>
     </div>
   );
 }

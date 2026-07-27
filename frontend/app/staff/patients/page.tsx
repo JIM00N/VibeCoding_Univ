@@ -10,8 +10,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+import { ErrorState } from "@/components/error-state";
 import { RoleContextBar } from "@/components/role-context-bar";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,17 +26,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, type Patient } from "@/lib/api";
+import { orDash } from "@/lib/format";
 
 // 성별 역매핑 — DB 는 M/F/null, 화면은 남/여/—(1.3 성별 규약, Story 4.2 조회에서도 재사용).
 const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
 function genderText(gender: string | null): string {
   return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
 }
-// nullable 표시 필드는 비어 있으면 —.
-function orDash(value: string | null): string {
-  return value && value.trim() ? value : "—";
-}
-
 export default function PatientListPage() {
   const router = useRouter();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -194,20 +191,6 @@ function ListSkeleton() {
       {Array.from({ length: 5 }).map((_, i) => (
         <Skeleton key={i} className="h-12 w-full rounded-lg" />
       ))}
-    </div>
-  );
-}
-
-// 조회 오류 상태 — 빈 상태와 구분해 "다시 시도"를 제공(백엔드 다운을 "환자 없음"으로 오인 방지).
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed py-16 text-center">
-      <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4">
-        <Button variant="outline" onClick={onRetry}>
-          다시 시도
-        </Button>
-      </div>
     </div>
   );
 }
