@@ -1,14 +1,17 @@
 # Deferred Work
 
-> 2026-07-27 Story 5.4(중복 사본 정리)가 사본 수렴류 9건을 처리·삭제했다 — booking-slots 2-소스 ·
-> orDash 4사본 · 짝 없는 slot-label · formatReservedAt 2-소스 · fetch-or-404 4사본 · CAS 409 문구
-> 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 · 의사↔진료과 검증 블록 2-소스.
-> 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
+> 2026-07-27 Story 5.4(중복 사본 정리)가 사본 수렴류 10건을 처리·삭제했다 — booking-slots 2-소스 ·
+> orDash 4사본 · 짝 없는 slot-label · formatReservedAt 2-소스 · ErrorState 로컬 6사본(승격 임계 항목) ·
+> fetch-or-404 4사본 · CAS 409 문구 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 ·
+> 의사↔진료과 검증 블록 2-소스. 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
 
 ## Deferred from: 5-4-중복-사본-정리 구현 (2026-07-27)
 
 - **`genderText`·`GENDER_LABEL` 3사본** — 성별 역매핑(M/F/null → 남/여/—)이 patient/select · staff/patients · staff/patients/[id] 에 동일 구현으로 존재. 5.4 스토리 대상 목록(회고 액션 #5 + deferred 라우팅 건) 밖이라 스코프 규율상 보류 — orDash 와 같은 방식으로 `lib/format.ts` 이관이 자연스럽다. 다음 정리 기회(또는 해당 화면을 만지는 스토리)에서 처리. [frontend/app/patient/select/page.tsx ↔ frontend/app/staff/patients/page.tsx ↔ frontend/app/staff/patients/[id]/page.tsx]
-- **`ensure_utc` 의 datetime 경계 OverflowError** — 5.4 가 visited_at 인라인 정규화(naive 만 replace)를 공유 `ensure_utc`(항상 `astimezone(utc)`)로 바꾸며, 연도 1/9999 경계의 aware 비-UTC 입력(예: `0001-01-01T00:00:00+09:00`)이 기존 201(저장)에서 500(OverflowError→전역 핸들러)으로 바뀌는 병리 경로가 생겼다(5.4 드리프트 검증 발견, Low). 프런트는 이런 값을 만들 수 없고 크래프트 API 한정 — 필요해지면 ensure_utc 에 경계 가드 또는 400 매핑. [backend/app/slots.py, backend/app/services/medical_records.py]
+- **`ensure_utc` 의 datetime 경계 OverflowError** — 5.4 가 visited_at 인라인 정규화(naive 만 replace)를 공유 `ensure_utc`(항상 `astimezone(utc)`)로 바꾸며, 연도 1/9999 경계의 aware 비-UTC 입력(예: `0001-01-01T00:00:00+09:00`)이 기존 201(저장)에서 500(OverflowError→전역 핸들러)으로 바뀌는 병리 경로가 생겼다(5.4 드리프트 검증 발견 → 코드리뷰 3층 교차 재확인·Defer 확정, Low). 프런트는 이런 값을 만들 수 없고 크래프트 API 한정 — 필요해지면 ensure_utc 에 경계 가드 또는 400 매핑. [backend/app/slots.py, backend/app/services/medical_records.py]
+- **`ErrorState` 정본의 live-region 부재** — 정본(`components/error-state.tsx`)에 `role`/`aria-live` 가 없어 오류 상태 전환이 스크린리더에 통지되지 않는다(같은 파일군의 NoticeState 는 `role="status"` 보유 — 드리프트). 3.1 deferred 항목("사본 승격 임계")에 딸려 있던 관찰이 5.4 의 항목 삭제로 소실될 뻔해 재기록(5.4 코드리뷰 Patch). 이관 화면들의 기존 동작과 동일해 회귀는 아님 — 1.5 deferred 의 SR 침묵 하드닝(aria-live)과 함께 처리 후보. [frontend/components/error-state.tsx]
+
+## Deferred from: code review of 6-3-직원-대리-예약 (2026-07-26)
 
 - **환자 검색이 페이징 없이 전체 환자를 조회·렌더** — `GET /patients`(`backend/app/db/patients.py:22-26`)에 `LIMIT`이 없고 `lib/api.ts:174-180`에도 페이징이 없어, 대리 예약 다이얼로그를 열 때마다 전체 환자 표를 받아 `max-h-48` 스크롤러 안에 전량 `<button>`으로 렌더한다. 시드 3명 규모에선 무해하나 실제 규모에선 매 열림마다 전량 전송 + DOM 수백 노드. 처리 시 서버 `LIMIT`+검색어 필수화 또는 무한 스크롤. [frontend/components/proxy-booking-dialog.tsx (환자 검색), backend/app/db/patients.py]
 - **검색 0건에서 [신규 환자 등록]으로 이탈하면 나머지 입력이 소실되고 복귀 경로가 없음** — 다이얼로그를 벗어나 `/staff/patients/new`로 이동하면 컴포넌트가 언마운트돼 진료과·의사·날짜·시간 선택이 사라지고, 등록 성공 후에도 그 화면에 머물러(`app/staff/patients/new/page.tsx`) 예약 화면으로 돌려보내지 않는다. 환자를 폼 첫 필드로 둔 설계가 피해를 줄이지만(보통 다른 값 입력 전에 이탈) 완전 해소는 아니다. 근본 해결은 다이얼로그 안 인라인 환자 등록(모달 2단계 — UX-DR6 위배)이나 복귀 쿼리(`?returnTo=`). [frontend/components/proxy-booking-dialog.tsx (0건 안내 링크)]

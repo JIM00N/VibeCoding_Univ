@@ -8,9 +8,8 @@
 // ⚠️ 분 ∈ {0,30}·초 0 으로만 만들기 때문에 백엔드 to_slot() 재정규화와 reserved_at 30분 CHECK 를
 //    그대로 통과한다(AD-3, AD-9).
 //
-// 이 모듈은 Story 2.1(app/patient/book/page.tsx)의 로컬 헬퍼와 같은 계산을 하는 2번째 사본이다 —
-// 환자 예약 화면은 동결(add-only 규율)이라 import 로 이관하지 않았고, 통합은 중복 사본 정리 스토리
-// 몫이다(deferred-work: booking-slots 2-소스).
+// Story 5.4 가 2.1 의 로컬 사본(book 화면 33-101행)을 삭제하고 import 로 이관했다 — 이제 이 모듈이
+// 슬롯·날짜 계산의 유일 정본이다. 로컬 재사본 금지.
 
 import type { Slot } from "@/components/slot-picker";
 

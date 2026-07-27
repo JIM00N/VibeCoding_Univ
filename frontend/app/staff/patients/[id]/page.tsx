@@ -29,7 +29,8 @@ import { api, type Appointment, type MedicalRecord, type Patient } from "@/lib/a
 import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
 import { formatReservedAt, orDash } from "@/lib/format";
 
-// 성별 역매핑·nullable 대시 — 목록 페이지의 표시 규약과 동일(작은 지역 헬퍼, 공유 추출은 정리 스토리 몫).
+// 성별 역매핑 — 목록 페이지의 표시 규약과 동일. 3사본 잔존은 deferred-work 5-4 절 기록 참조
+// (orDash 는 5.4 에서 lib/format 정본으로 이관됨).
 const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
 function genderText(gender: string | null): string {
   return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
