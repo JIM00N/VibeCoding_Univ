@@ -31,6 +31,37 @@ _ALLOWED_SOURCE = {
 # 완료는 이미 진료가 끝났고, 취소는 무효라 재배정 대상이 아니다(에픽 AC·addendum A4 점유 대상과 일치).
 _DOCTOR_CHANGE_SOURCE = ("대기", "확정")
 
+# CAS(compare-and-set) 경합 409 문구 정본(Story 5.4 수렴 — 2.2 원문 그대로, 계약 테스트가 고정).
+# 예약 서비스가 status 를 소유하므로(AD-5) 경합 문구도 여기 산다 — medical_records 가 import 한다.
+CAS_CONFLICT_DETAIL = "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요."
+
+
+def fetch_appointment_or_404(appointment_id: int) -> dict:
+    """예약 행(dict)을 로드하고 없으면 404 한국어로 거부한다(문구 정본 — Story 5.4 수렴).
+
+    2.2/2.3/3.1 에 흩어졌던 fetch-or-404 4사이트가 여기 하나로 수렴했다. 반환은 db 행 dict —
+    정규 모델 매핑은 각 소비자가 _to_appointment_out 으로(AD-10, 리소스당 매핑 한 곳).
+    """
+    row = appointments_db.fetch_appointment(appointment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+    return row
+
+
+def _require_doctor_in_department(doctor_id: int, hospital_department_id: int) -> None:
+    """의사 존재 + 진료과 소속 정합 검증(AD-6) — 생성·의사 변경 공용(문구 2종 정본, Story 5.4 수렴).
+
+    DB FK 는 존재만 보장하고 소속 일치를 강제하지 않으므로 앱이 검증한다. 위반은 400 한국어(AD-10).
+    """
+    doctor_hd = appointments_db.fetch_doctor_department(doctor_id)
+    if doctor_hd is None:
+        raise HTTPException(status_code=400, detail="담당 의사를 찾을 수 없어요. 다시 선택해 주세요.")
+    if doctor_hd != hospital_department_id:
+        raise HTTPException(
+            status_code=400,
+            detail="선택한 진료과의 담당 의사가 아니에요. 의사를 다시 선택해 주세요.",
+        )
+
 
 def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
     """예약을 생성한다(FR-6, P0). status=대기, doctor_id 채워짐.
@@ -57,14 +88,7 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
         raise HTTPException(status_code=400, detail="담당 의사를 선택해 주세요.")
 
     # AD-6: 의사↔진료과 소속 정합을 앱이 검증(FK 는 존재만 보장).
-    doctor_hd = appointments_db.fetch_doctor_department(payload.doctor_id)
-    if doctor_hd is None:
-        raise HTTPException(status_code=400, detail="담당 의사를 찾을 수 없어요. 다시 선택해 주세요.")
-    if doctor_hd != payload.hospital_department_id:
-        raise HTTPException(
-            status_code=400,
-            detail="선택한 진료과의 담당 의사가 아니에요. 의사를 다시 선택해 주세요.",
-        )
+    _require_doctor_in_department(payload.doctor_id, payload.hospital_department_id)
 
     try:
         row = appointments_db.insert_appointment(
@@ -99,12 +123,9 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
 def get_appointment(appointment_id: int) -> AppointmentOut:
     """예약 1건을 정규 응답 모델로 돌려준다(Story 3.1 — 진료 기록 페이지의 대상 예약 로드).
 
-    없으면 404 한국어(기존 문구 재사용). db 는 기존 fetch_appointment 를 그대로 쓴다(add-only).
+    없으면 404 한국어(fetch_appointment_or_404 정본 문구).
     """
-    row = appointments_db.fetch_appointment(appointment_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
-    return _to_appointment_out(row)
+    return _to_appointment_out(fetch_appointment_or_404(appointment_id))
 
 
 def list_appointments(
@@ -143,9 +164,7 @@ def set_appointment_status(
     if target not in _CLIENT_SETTABLE_STATUS:
         raise HTTPException(status_code=400, detail="확정 또는 취소만 가능해요.")
 
-    current = appointments_db.fetch_appointment(appointment_id)
-    if current is None:
-        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+    current = fetch_appointment_or_404(appointment_id)
 
     if current["status"] not in _ALLOWED_SOURCE[target]:
         raise HTTPException(
@@ -159,10 +178,7 @@ def set_appointment_status(
     if row is None:
         # 위에서 존재·적격을 확인했으나 UPDATE 시점에 status 가 바뀐 경합(동시 확정/취소 등).
         # compare-and-set 가드가 금지 전이를 막았다 — 새로고침 후 재확인을 안내한다(409 Conflict).
-        raise HTTPException(
-            status_code=409,
-            detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",
-        )
+        raise HTTPException(status_code=409, detail=CAS_CONFLICT_DETAIL)
     return _to_appointment_out(row)
 
 
@@ -180,9 +196,7 @@ def set_appointment_doctor(
       같은 문 안에서 검사, 충돌이면 409(CAS 409 와 문구로 구분). 이전 슬롯 해제 + 새 슬롯
       점유는 doctor_id 단일 UPDATE 로 원자 성립한다.
     """
-    current = appointments_db.fetch_appointment(appointment_id)
-    if current is None:
-        raise HTTPException(status_code=404, detail="예약을 찾을 수 없어요.")
+    current = fetch_appointment_or_404(appointment_id)
 
     if current["status"] not in _DOCTOR_CHANGE_SOURCE:
         if current["status"] == "완료":
@@ -194,14 +208,7 @@ def set_appointment_doctor(
         raise HTTPException(status_code=400, detail=detail)
 
     # AD-6: 의사↔진료과 소속 정합을 앱이 검증(2.1 create_appointment 와 같은 함수·문구).
-    doctor_hd = appointments_db.fetch_doctor_department(payload.doctor_id)
-    if doctor_hd is None:
-        raise HTTPException(status_code=400, detail="담당 의사를 찾을 수 없어요. 다시 선택해 주세요.")
-    if doctor_hd != current["hospital_department_id"]:
-        raise HTTPException(
-            status_code=400,
-            detail="선택한 진료과의 담당 의사가 아니에요. 의사를 다시 선택해 주세요.",
-        )
+    _require_doctor_in_department(payload.doctor_id, current["hospital_department_id"])
 
     # 에픽 AC: "같은 진료과의 **다른** 의사" — 같은 의사로의 변경은 무의미라 거부.
     if payload.doctor_id == current["doctor_id"]:
@@ -222,10 +229,7 @@ def set_appointment_doctor(
         ) from exc
     if row is None:
         # 검증과 UPDATE 사이에 status 가 완료/취소로 바뀐 경합 — CAS 가드가 재배정을 막았다.
-        raise HTTPException(
-            status_code=409,
-            detail="예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.",
-        )
+        raise HTTPException(status_code=409, detail=CAS_CONFLICT_DETAIL)
     return _to_appointment_out(row)
 
 
