@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-27 # 5-4 중복 사본 정리 create-story 완료(ready-for-dev, 스코프 추가 — Epic 6 액션 #5). 다음: 5-4 dev → 5.2 자동 배정
+last_updated: 2026-07-27 # 5-4 중복 사본 정리 done(커밋+배포+라이브) — Epic 6 액션 #5·Epic 3 액션 #3 종결. 다음: 5.2 의사 자동 배정
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -81,7 +81,7 @@ development_status:
   # Epic 5: 가용성 안전장치 & Walk-in (P1 — 관통 후 얹기)
   epic-5: in-progress # 2026-07-27 첫 스토리 5.1 create-story로 전환
   5-1-가용성-충돌-검사: done # PR #21 머지(917f877)·Railway/Vercel 배포·라이브 실측(충돌 409·taken 렌더·콘솔 0) 완료. 코드리뷰 4층 Patch 10·Defer 2·Dismiss 3. 검증 예약 전량 원복
-  5-4-중복-사본-정리: review # 스코프 추가 2026-07-27(Epic 6 회고 액션 #5). dev 완료(사본 10건 수렴·pytest 119·curl 8/8·브라우저 실증·원복) + 코드리뷰 4층 완료(High/Med 0·Patch 5 반영·Defer 1·Dismiss 1, f003043). 다음: PR→사용자 승인 머지→배포·라이브 확인이 done 게이트
+  5-4-중복-사본-정리: done # 스코프 추가 2026-07-27(Epic 6 회고 액션 #5). PR #22 머지(ab2ffcd)·Railway/Vercel 배포·라이브 실측(API 7/7 문구 불변·신규 번들 마커·6라우트 200) 완료. 코드리뷰 4층 High/Med 0·Patch 5·Defer 1·Dismiss 1. 사본 10건 수렴·순 -149줄·데이터 생성 0
   5-2-의사-자동-배정: backlog
   5-3-walk-in-즉시-진료: backlog
   epic-5-retrospective: optional
@@ -146,7 +146,7 @@ action_items:
   - epic: 3
     action: "P0 관통(Epic 4 done) 후 중복 사본 정리 스토리 — fetch-or-404 4사본·CAS 409 문구 3사본·ensure_utc 공유 헬퍼·ErrorState 4곳 이관 (정식 스토리 Task로 내장, 회고 교훈 2 적용)"
     owner: "지석"
-    status: in-progress # 2026-07-27 Story 5-4-중복-사본-정리 생성(ready-for-dev) — done 은 스토리 done 과 함께
+    status: done # 2026-07-27 Story 5.4 done(PR #22·배포·라이브) — 3에픽 이월(Epic 3 #3 → Epic 6 #5) 종결
 
   # Epic 6 회고 액션 (2026-07-26, epic-6-retro-2026-07-26.md)
   - epic: 6
@@ -168,7 +168,7 @@ action_items:
   - epic: 6
     action: "중복 사본 정리 스토리 — 시점 재확정: Epic 5.1 완료 직후 (booking-slots 2-소스·orDash 3사본·formatReservedAt 2-소스·fetch-or-404 4사본·ensure_utc·ErrorState 4곳)"
     owner: "지석"
-    status: in-progress # 2026-07-27 Story 5-4-중복-사본-정리 생성(ready-for-dev, 실측 재집계: orDash 4·ErrorState 6·ensure_utc 3곳) — done 은 스토리 done 과 함께
+    status: done # 2026-07-27 Story 5.4 done(PR #22·배포·라이브) — 실측 재집계(orDash 4·ErrorState 6·ensure_utc 3곳) 포함 사본 10건 수렴. 잔여 genderText 3사본은 deferred-work 기록
   - epic: 6
     action: "5.1 create-story 에 범위 확장 반영 — 대리 예약을 쓰기 경로에 명시 · taken 표시 2화면(또는 slot-picker 확장 결정) · 과거 시각 가드와 충돌 가드 배치 정리"
     owner: "지석(create-story)"
