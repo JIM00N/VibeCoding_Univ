@@ -80,7 +80,7 @@ development_status:
 
   # Epic 5: 가용성 안전장치 & Walk-in (P1 — 관통 후 얹기)
   epic-5: in-progress # 2026-07-27 첫 스토리 5.1 create-story로 전환
-  5-1-가용성-충돌-검사: review # 2026-07-27 구현 완료 — pytest 113·curl 실증(union+floor·취소 해제)·브라우저 실측(taken 3상태·409 인라인) 그린. 코드리뷰 대기(리뷰 예산 상향 대상)
+  5-1-가용성-충돌-검사: review # 2026-07-27 코드리뷰 완료(4층: Codex+Blind+Edge+Auditor) — Patch 10 전부 반영·pytest 116·실 DB 재실증. PR 머지(사용자 승인)→배포·라이브 확인 남음
   5-2-의사-자동-배정: backlog
   5-3-walk-in-즉시-진료: backlog
   epic-5-retrospective: optional

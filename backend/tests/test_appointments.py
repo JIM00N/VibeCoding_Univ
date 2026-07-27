@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.db import appointments as appointments_db
@@ -114,7 +115,9 @@ def test_create_appointment_floors_reserved_at_to_slot(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": _future_iso(10, 17, 42),
+            # 기준 시각을 1회만 고정한다 — 요청 생성·assert 가 각각 now() 를 부르면 UTC 자정을
+            # 사이에 두고 실행될 때 기준 날짜가 하루 어긋나는 플레이크가 된다(코드리뷰).
+            "reserved_at": (base := _future_at(10, 17, 42)).isoformat().replace("+00:00", "Z"),
         },
     )
 
@@ -123,7 +126,7 @@ def test_create_appointment_floors_reserved_at_to_slot(monkeypatch):
     # 분 ∈ {0,30}, 초 = 0 (appointment_reserved_at_slot_check 통과 조건).
     assert saved.minute in (0, 30)
     assert saved.second == 0
-    assert saved == _future_at(10, 0)
+    assert saved == base.replace(minute=0, second=0)
 
 
 def test_create_appointment_already_aligned_time_unchanged(monkeypatch):
@@ -143,12 +146,13 @@ def test_create_appointment_already_aligned_time_unchanged(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": _future_iso(14, 30),
+            # 기준 시각 1회 고정 — 자정 경계 플레이크 방지(위 floor 테스트와 동일 사유).
+            "reserved_at": (base := _future_at(14, 30)).isoformat().replace("+00:00", "Z"),
         },
     )
 
     assert resp.status_code == 201
-    assert captured["reserved_at"] == _future_at(14, 30)
+    assert captured["reserved_at"] == base
 
 
 def test_create_appointment_missing_doctor_rejected_korean_detail(monkeypatch):
@@ -951,3 +955,36 @@ def test_change_doctor_past_appointment_still_allowed(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["doctor_id"] == 4
+
+
+def test_insert_appointment_rejects_none_doctor_id():
+    # 코드리뷰: NULL doctor_id 는 게이트 조각(`a.doctor_id = NULL`)을 무력화한다 — db 계층이
+    # 커넥션을 열기 전에 명시 거부(서비스 400 뒤의 2차 방어선, 5.2 직접 호출자 대비).
+    with pytest.raises(ValueError):
+        appointments_db.insert_appointment(
+            1, 2, None, datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc)
+        )
+
+
+def test_doctor_update_interpretation_prefers_cas_over_slot_conflict():
+    # 코드리뷰: CAS 불일치 + 슬롯 충돌 이중 경합 → None(CAS 409 경로) 우선 — 슬롯 409 의
+    # "다른 의사를 선택해 주세요"는 이 경우 따라도 성공할 수 없는 오도 안내이기 때문.
+    assert (
+        appointments_db._interpret_doctor_update_row(
+            {"slot_taken": True, "cas_ok": False, "id": None}
+        )
+        is None
+    )
+
+
+def test_doctor_update_interpretation_slot_conflict_and_success_paths():
+    # CAS 통과 + 슬롯 충돌 → SlotTakenError(서비스가 슬롯 409 로 매핑).
+    with pytest.raises(SlotTakenError):
+        appointments_db._interpret_doctor_update_row(
+            {"slot_taken": True, "cas_ok": True, "id": None}
+        )
+    # 정상 갱신 행은 해석 플래그 2개(slot_taken·cas_ok)를 벗겨 기존 행 계약 그대로 돌려준다.
+    row = appointments_db._interpret_doctor_update_row(
+        {"slot_taken": False, "cas_ok": True, "id": 10, "doctor_id": 4}
+    )
+    assert row == {"id": 10, "doctor_id": 4}

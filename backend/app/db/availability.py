@@ -69,12 +69,18 @@ def slot_taken_sql(slot_sql: str) -> str:
 
 # 한 의사의 [start, end) 범위 점유 슬롯 — 프런트 슬롯 피커의 taken 셀 사전 표시용(UX-DR3).
 # 사전 표시는 예방일 뿐 최종 차단은 쓰기 게이트(409)가 담당한다(서버가 가용성의 진실).
+# 범위 판정은 원시 occupied_at 이 아니라 **floor 된 슬롯 기준**이다(코드리뷰) — walk-in
+# visited_at 은 30분 CHECK 가 없어 비정렬이 실존하고, 원시 비교는 비정렬 start/end 입력에서
+# 범위 밖 슬롯을 돌려주거나 점유를 누락한다("[start, end) 점유 슬롯" 계약 유지, 5.2·5.3 재사용 대비).
 _SELECT_TAKEN_SLOTS = f"""
-    select distinct {SLOT_EXPR.format(col="o.occupied_at")} as slot
-    from ({OCCUPIED_SOURCES}) o
-    where o.occupied_at >= %(start)s
-      and o.occupied_at < %(end)s
-    order by slot
+    select s.slot
+    from (
+        select distinct {SLOT_EXPR.format(col="o.occupied_at")} as slot
+        from ({OCCUPIED_SOURCES}) o
+    ) s
+    where s.slot >= %(start)s
+      and s.slot < %(end)s
+    order by s.slot
 """
 
 

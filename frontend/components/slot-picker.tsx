@@ -43,9 +43,12 @@ export function SlotPicker({
 
   // roving tabindex 진입점: 선택된 셀 → 없으면 첫 선택 가능(비 taken) 셀만 Tab 으로 도달.
   // 전부 taken 이면 -1(도달 셀 없음) — disabled 셀은 어차피 포커스 불가, 화면이 별도 안내를 띄운다.
+  // 선택 셀이 taken 인 (모순) 조합도 firstSelectable 로 폴백한다(코드리뷰) — 안 그러면 어떤 셀도
+  // tabIndex 0 을 못 받아 격자 전체가 Tab 진입 불가가 된다(현 사용처는 배칭으로 회피하나 재사용 계약 가드).
   const selectedIndex = slots.findIndex((s) => s.iso === value);
   const firstSelectable = takenFlags.findIndex((t) => !t);
-  const tabbableIndex = selectedIndex >= 0 ? selectedIndex : firstSelectable;
+  const tabbableIndex =
+    selectedIndex >= 0 && !takenFlags[selectedIndex] ? selectedIndex : firstSelectable;
 
   function handleKeyDown(e: React.KeyboardEvent, index: number) {
     if (slots.length === 0) return; // 빈 목록 방어(modulo-by-zero). 현재 배선상 미발생이나 재사용 대비.

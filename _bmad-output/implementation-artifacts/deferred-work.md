@@ -105,6 +105,10 @@
 
 - **환자 서브 페이지 신원 신선도(스테일 신원)** — AC5 의 "저장 신원 vs 서버" 대조(`getPatients()` 로 이름·id 불일치 시 clearPatient+리다이렉트)가 `/patient` 홈에만 있다. 재시드/삭제로 id 가 재할당된 뒤 `/patient/appointments`·`/patient/records` 를 **직접 URL·북마크로** 진입하면(홈 우회) 스테일 신원이 안 걸려 남의 진료 데이터가 저장된 이름 아래 렌더될 수 있다. 또한 탭 간 신원 교체(storage 이벤트) 시 리패치 전 1프레임 동안 이전 환자 목록이 새 이름 아래 잠깐 보일 수 있다(`items` 미초기화 + `setLoading` 이 `setTimeout(0)` 지연). AC5 가 "홈 진입 1회"로 의도 스코프했고 AD-8(앱 레벨 필터·보안 아님) 전제라 보류 — 근본 해결은 실인증(AD-7 deferred). 처리 시: 신원 서버 대조를 공용 훅으로 뽑아 환자 3페이지 공통 적용 + `patientId` 변경 시 목록 리셋(렌더 시점 가드). [frontend/app/patient/appointments/page.tsx, frontend/app/patient/records/page.tsx, frontend/app/patient/page.tsx:35-56]
 
+## Deferred from: code review of 5-1-가용성-충돌-검사 (2026-07-27)
+
+- **부분 유니크 인덱스 백스톱(TOCTOU 완화)** — 5.1 게이트는 단일 세션 전제(문서화된 경계)라 동시 요청 이중 예약을 못 막는다. `create unique index ... on appointment(doctor_id, reserved_at) where status in ('대기','확정')` 부분 유니크만으로 **주 경합(예약 vs 예약)은 DB 레벨 차단 가능**(walk-in `medical_record` arm 은 제외 — 완전 차단은 EXCLUDE/점유 테이블 단일화, 아키텍처 Deferred). 5.1 스토리의 "(doctor,slot) 유니크는 합집합이라 불가능" 서술은 과장이었음(리뷰 정정). 적용 시 서비스의 UniqueViolation → 409 매핑 추가 필요. 데모 단일 세션에선 비차단이라 보류. [db/migrations/, backend/app/db/appointments.py]
+
 ## Deferred from: 5-1-가용성-충돌-검사 구현 (2026-07-27)
 
 - **`allowedDevOrigins` 의 LAN IP 하드코딩** — 브라우저 실측(Chrome 확장이 `localhost` 탐색을 막아 LAN IP 로 접속)을 위해 `next.config.ts` 에 `allowedDevOrigins: ["192.168.0.13"]` 을 추가했다(Next 16 은 미등록 교차 오리진의 dev 접근을 차단해 하이드레이션이 멈춘다 — 실측 중 실증). dev 전용·프로덕션 빌드 무영향이나 IP 가 DHCP 로 바뀌면 갱신 필요. 다른 환경에서 실측할 일이 생기면 환경셋업.md 에 절차(백엔드 `--host 0.0.0.0` + CORS 오리진 임시 추가 + `NEXT_PUBLIC_API_BASE_URL` 임시 지정 포함)로 승격. [frontend/next.config.ts]

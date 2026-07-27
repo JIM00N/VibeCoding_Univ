@@ -105,6 +105,11 @@ export function ProxyBookingDialog({
   // 점유 슬롯(epoch ms, Story 5.1) — null 이면 미조회/조회 실패(taken 없이 렌더). nonce 는 409 후 재조회.
   const [takenMs, setTakenMs] = useState<ReadonlySet<number> | null>(null);
   const [availabilityNonce, setAvailabilityNonce] = useState(0);
+  // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(리뷰 P8).
+  const selectedIsoRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIsoRef.current = selectedIso;
+  }, [selectedIso]);
 
   // 인라인 검증 오류 (AC5)
   const [patientErr, setPatientErr] = useState<string | null>(null);
@@ -215,7 +220,7 @@ export function ProxyBookingDialog({
   // (의사, 날짜)를 고르면 그 날의 점유 슬롯을 미리 받아 taken 셀로 그린다(Story 5.1, UX-DR3).
   // 열렸을 때만 조회한다(닫힌 채 네트워크 금지 규율). 조회 실패는 치명 아님 — taken 없이 렌더하고
   // 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
-  // stale taken 비우기는 진료과·날짜 변경 핸들러·resetForm 이 담당한다(effect 동기 setState 린트 금지).
+  // stale taken 비우기는 진료과·의사·날짜 변경 핸들러·resetForm 이 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
     if (!open || !doctorId) return;
     let cancelled = false;
@@ -231,11 +236,16 @@ export function ProxyBookingDialog({
         if (cancelled) return;
         const next = new Set(av.taken.map((t) => new Date(t).getTime()));
         setTakenMs(next);
-        // 이미 고른 슬롯이 점유로 판명되면 선택을 해제해 충돌 제출을 예방한다.
-        setSelectedIso((prev) => (prev && next.has(new Date(prev).getTime()) ? null : prev));
+        // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(리뷰 P8).
+        const cur = selectedIsoRef.current;
+        if (cur && next.has(new Date(cur).getTime())) {
+          setSelectedIso(null);
+          setSlotErr("고른 시간이 그새 예약됐어요. 다른 시간을 골라 주세요.");
+        }
       })
       .catch(() => {
-        if (!cancelled) setTakenMs(null);
+        // 조회 실패 시 이전 스냅샷(409로 확인된 마킹 포함)을 보존한다 — null 리셋은 방금 확인한
+        // 충돌 셀까지 되살린다(리뷰 P3). 미조회 상태면 어차피 null(조용한 강등 유지).
       });
     return () => {
       cancelled = true;
@@ -591,8 +601,12 @@ export function ProxyBookingDialog({
               items={doctorItems}
               value={doctorId}
               onValueChange={(v) => {
+                if (v === doctorId) return; // 동일값 재발화 가드 — taken 을 불필요하게 지우지 않는다.
                 setDoctorId(v as string);
                 setDoctorErr(null);
+                // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(리뷰 P2 — false-block 방향은
+                // 서버 백스톱이 없다). 새 응답이 오면 effect 가 다시 채운다.
+                setTakenMs(null);
               }}
               disabled={!deptId || doctorsLoading || doctorsEmpty}
             >

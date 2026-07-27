@@ -19,7 +19,9 @@ _SELECT_DOCTOR_HD = """
 
 # 예약 1건을 충돌 게이트와 함께 삽입하고(Story 5.1, FR-15·AD-4), 표시 필드까지 한 왕복으로 돌려준다.
 # - taken CTE 가 (의사, 슬롯) 점유를 판정하고, INSERT 는 `where not slot_taken` 으로 게이트된다 —
-#   검사+삽입이 같은 SQL 문(한 커넥션·한 트랜잭션)이라 문장 원자성이 성립한다(단일 CTE 관용구).
+#   검사+삽입이 같은 SQL 문이라 한 문장 안에서는 검사↔삽입 사이에 끼어들 틈이 없다(단일 CTE 관용구).
+#   ⚠️ 이는 **단일 세션 전제**의 보장이다 — 동시에 실행되는 다른 문장의 미커밋 삽입은 스냅샷에 안
+#   보이므로 동시 요청 경쟁(TOCTOU)은 막지 못한다(명시적 범위 밖 — 아키텍처 Deferred, AD-4 강제 경계).
 #   충돌 조각·floor 식은 db/availability.py 한 벌뿐(AD-3). 슬롯 = %(reserved_at)s (서비스가
 #   to_slot() 로 floor 한 값이지만, 비교 양변에 floor 식을 재적용해 저장 형태에 의존하지 않는다).
 # - id 는 GENERATED ALWAYS AS IDENTITY 라 넣지 않는다. status 는 명시적 '대기'(자기문서화).
@@ -154,7 +156,8 @@ _UPDATE_APPOINTMENT_STATUS = """
 # status·reserved_at·hospital_department_id 는 건드리지 않는다(AD-5, 과 이동 없음).
 _UPDATE_APPOINTMENT_DOCTOR = f"""
     with target as (
-        select reserved_at
+        select reserved_at,
+               status = any(%(allowed_sources)s) as cas_ok
         from public.appointment
         where id = %(appointment_id)s
     ),
@@ -170,6 +173,7 @@ _UPDATE_APPOINTMENT_DOCTOR = f"""
         returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
     )
     select t.slot_taken,
+           (select cas_ok from target) as cas_ok,
            u.id, u.patient_id, u.hospital_department_id, u.doctor_id, u.reserved_at, u.status,
            p.name   as patient_name,
            doc.name as doctor_name,
@@ -181,6 +185,24 @@ _UPDATE_APPOINTMENT_DOCTOR = f"""
     left join public.department d           on d.id  = hd.department_id
     left join public.doctor doc             on doc.id = u.doctor_id
 """
+
+
+def _interpret_doctor_update_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """의사 변경 게이트 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상).
+
+    CAS 불일치(cas_ok=false)가 슬롯 충돌보다 **우선**한다(코드리뷰) — 이중 경합에서 슬롯 409 의
+    "다른 의사를 선택해 주세요"는 따라도 성공할 수 없는 오도 안내가 되기 때문. 진짜 사유(status
+    변경)는 None → CAS 409 경로가 안내한다. 행 자체가 없으면(없는 id) 역시 None.
+    """
+    if row is None:
+        return None  # fetchone 계약상 가능성 정직 반영(taken CTE 가 항상 1행이라 도달 불가).
+    slot_taken = row.pop("slot_taken")
+    cas_ok = row.pop("cas_ok")
+    if row["id"] is None:
+        if slot_taken and cas_ok:
+            raise SlotTakenError()
+        return None  # CAS 불일치·없는 id — 기존 None 계약 유지(서비스가 409/404 소유).
+    return row
 
 
 def fetch_doctor_department(doctor_id: int) -> int | None:
@@ -204,6 +226,11 @@ def insert_appointment(
     409 로 매핑). 반환 계약은 기존 그대로 "행 dict | None" — slot_taken 플래그는 여기서
     해석·제거한다. FK 위반은 psycopg 예외로 올라간다. 파라미터화 SQL(injection 방지).
     """
+    if doctor_id is None:
+        # 게이트 조각의 `a.doctor_id = NULL` 비교는 항상 no-match 라 충돌 검사가 통째로 무력화된다.
+        # P0 서비스가 400으로 먼저 막지만, 5.2(자동 배정) 등 후속 직접 호출자를 위해 db 계층에서도
+        # 명시 거부한다(코드리뷰 — 커넥션을 열기 전에 실패해 테스트도 DB 없이 가능).
+        raise ValueError("insert_appointment: doctor_id 없이는 충돌 게이트가 성립하지 않아요.")
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
@@ -309,10 +336,4 @@ def update_appointment_doctor(
                 },
             )
             row = cur.fetchone()
-    if row is None:
-        return None  # fetchone 계약상 가능성 정직 반영(taken CTE 가 항상 1행이라 도달 불가).
-    if row.pop("slot_taken"):
-        raise SlotTakenError()
-    if row["id"] is None:
-        return None  # CAS 불일치(경합)·없는 id — 기존 None 계약 유지(서비스가 409/404 소유).
-    return row
+    return _interpret_doctor_update_row(row)
