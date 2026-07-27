@@ -1,11 +1,15 @@
 "use client";
 
-// 환자 예약 생성 (FR-6 P0, Story 2.1). 진료과·담당 의사·30분 슬롯을 직접 골라 POST /appointments.
+// 환자 예약 생성 (FR-6, Story 2.1). 진료과·담당 의사·30분 슬롯을 골라 POST /appointments.
 // 신원(1.5)에서 patient_id 를 얻고, 슬롯은 30분 격자로 만들어 ISO-8601 UTC 로 보낸다(백엔드 to_slot() 재검증).
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1, AD-10). 저장은 비관적(서버 확정 후 반영).
 // Story 5.1(FR-15): (의사, 날짜) 선택 시 점유 슬롯을 미리 받아 taken 셀로 그리고, 제출 충돌(409)은
 // red 인라인 + 그 셀 taken 갱신으로 처리한다. 이 페이지는 라우트 상주형이라 시각·가용성이 낡을 수
 // 있다 — 제출 직전 재검증과 서버 게이트(400/409)가 최종 방어다(주기적 폴링은 두지 않는다).
+// Story 5.2(FR-6 P1): 의사 Select 의 "자동 배정" 옵션 — doctor_id: null 로 제출하면 서버가 그
+// 진료과의 빈 의사를 골라 채운다. taken 사전 표시는 과 의사 전원의 가용성 교집합(전원 점유 슬롯만
+// taken — 한 명이라도 비면 자동 배정 가능)으로 계산한다. 과당 의사 수가 소수(시드 2명)라 N회
+// 병렬 호출로 충분하다 — 규모가 커지면 진료과 단위 가용성 API 로 승격(deferred).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -28,6 +32,9 @@ import { api, ApiError, type Appointment, type Department, type Doctor } from "@
 import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
 import { formatReservedAt } from "@/lib/format";
 import { usePatientIdentity } from "@/lib/patient-identity";
+
+// 의사 Select 의 자동 배정 옵션 값(Story 5.2) — 실제 의사 id(숫자 문자열)와 절대 겹치지 않는다.
+const AUTO_DOCTOR = "auto";
 
 export default function BookAppointmentPage() {
   const router = useRouter();
@@ -116,10 +123,15 @@ export default function BookAppointmentPage() {
   }, [deptId]);
 
   // (의사, 날짜)를 고르면 그 날의 점유 슬롯을 미리 받아 taken 셀로 그린다(Story 5.1, UX-DR3).
-  // 조회 실패는 치명 아님 — taken 없이 렌더하고 제출 시 서버 409 가 최종 방어한다(조용한 강등,
-  // 콘솔 0 유지). stale taken 비우기는 진료과·의사·날짜 변경 핸들러가 담당한다(effect 동기 setState 린트 금지).
+  // 자동 배정(Story 5.2)은 과 의사 전원의 가용성을 병렬로 받아 교집합만 taken — 전원 점유 슬롯만
+  // 막고, 한 명이라도 비면 예약 가능(자동 배정이 그 의사를 잡는다). 조회 실패(부분 실패 포함)는
+  // 치명 아님 — taken 없이 렌더하고 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
+  // stale taken 비우기는 진료과·의사·날짜 변경 핸들러가 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
     if (!doctorId) return;
+    // 자동 배정인데 의사 목록이 아직/전혀 없으면 조회 생략 — 옵션 자체가 목록 로드 후에만
+    // 선택 가능하므로 과도기(진료과 전환 직후) 한정이고, 핸들러가 이미 takenMs 를 비웠다.
+    if (doctorId === AUTO_DOCTOR && (doctors ?? []).length === 0) return;
     let cancelled = false;
     const daySlots = slotsForSeoulDay(selectedYmd);
     const startIso = daySlots[0].iso;
@@ -127,11 +139,20 @@ export default function BookAppointmentPage() {
     const endIso = new Date(
       new Date(daySlots[daySlots.length - 1].iso).getTime() + 1_800_000,
     ).toISOString();
-    api
-      .getAvailability(Number(doctorId), startIso, endIso)
-      .then((av) => {
+    const toMsSet = (taken: string[]) => new Set(taken.map((t) => new Date(t).getTime()));
+    const nextTaken: Promise<Set<number>> =
+      doctorId === AUTO_DOCTOR
+        ? Promise.all(
+            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso)),
+          ).then((avs) => {
+            const sets = avs.map((av) => toMsSet(av.taken));
+            // 교집합 — 모든 의사의 taken 에 공통인 슬롯만(전원 점유). sets 는 위 가드로 비지 않는다.
+            return new Set([...sets[0]].filter((ms) => sets.every((s) => s.has(ms))));
+          })
+        : api.getAvailability(Number(doctorId), startIso, endIso).then((av) => toMsSet(av.taken));
+    nextTaken
+      .then((next) => {
         if (cancelled) return;
-        const next = new Set(av.taken.map((t) => new Date(t).getTime()));
         setTakenMs(next);
         // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(리뷰 P8).
         const cur = selectedIsoRef.current;
@@ -147,14 +168,18 @@ export default function BookAppointmentPage() {
     return () => {
       cancelled = true;
     };
-  }, [doctorId, selectedYmd, availabilityNonce]);
+  }, [doctorId, doctors, selectedYmd, availabilityNonce]);
 
   const deptItems = useMemo(
     () => Object.fromEntries((departments ?? []).map((d) => [String(d.id), d.name])),
     [departments],
   );
   const doctorItems = useMemo(
-    () => Object.fromEntries((doctors ?? []).map((d) => [String(d.id), d.name])),
+    () => ({
+      // 자동 배정(Story 5.2) — 트리거 라벨용. 목록 첫 항목은 SelectContent 쪽에 있다.
+      [AUTO_DOCTOR]: "자동 배정",
+      ...Object.fromEntries((doctors ?? []).map((d) => [String(d.id), d.name])),
+    }),
     [doctors],
   );
 
@@ -205,7 +230,8 @@ export default function BookAppointmentPage() {
       const appt = await api.createAppointment({
         patient_id: patient.id,
         hospital_department_id: Number(deptId),
-        doctor_id: Number(doctorId),
+        // 자동 배정(Story 5.2)은 null — 서버가 그 진료과의 빈 의사를 골라 응답에 채워 준다.
+        doctor_id: doctorId === AUTO_DOCTOR ? null : Number(doctorId),
         reserved_at: selectedIso as string,
       });
       setCreated(appt);
@@ -249,6 +275,9 @@ export default function BookAppointmentPage() {
 
   const selectedSlotLabel = slots.find((s) => s.iso === selectedIso)?.label ?? null;
   const doctorName = doctors?.find((d) => String(d.id) === doctorId)?.name ?? null;
+  // 요약·슬롯 헤더 공용 라벨 — 자동 배정 모드에서도 렌더된다(Story 5.2).
+  const doctorLabel =
+    doctorId === AUTO_DOCTOR ? "자동 배정" : doctorName ? `${doctorName} 선생님` : null;
   const deptName = departments?.find((d) => String(d.id) === deptId)?.name ?? null;
 
   return (
@@ -323,7 +352,8 @@ export default function BookAppointmentPage() {
             )}
           </div>
 
-          {/* 담당 의사 (필수, 직접 선택 — P0) */}
+          {/* 담당 의사 (필수 — 직접 선택 또는 자동 배정, Story 5.2). 빈 선택≠자동: 미선택 제출은
+              여전히 인라인 에러다(실수로 자동 배정되는 사고 방지 — 비관적 UX). */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="doctor">
               담당 의사 <span className="text-destructive">*</span>
@@ -358,6 +388,8 @@ export default function BookAppointmentPage() {
                 />
               </SelectTrigger>
               <SelectContent>
+                {/* 자동 배정 — 항상 첫 항목(의사 목록이 로드된 뒤에만 Select 가 열린다). */}
+                <SelectItem value={AUTO_DOCTOR}>자동 배정</SelectItem>
                 {(doctors ?? []).map((doc) => (
                   <SelectItem key={doc.id} value={String(doc.id)}>
                     {doc.name} 선생님
@@ -365,6 +397,11 @@ export default function BookAppointmentPage() {
                 ))}
               </SelectContent>
             </Select>
+            {doctorId === AUTO_DOCTOR && !doctorErr && (
+              <p className="text-xs text-muted-foreground">
+                고른 시간이 빈 선생님 중 한 분이 자동으로 배정돼요.
+              </p>
+            )}
             {doctorErr && (
               <p id="doctor-error" role="alert" className="text-sm text-destructive">
                 {doctorErr}
@@ -412,7 +449,7 @@ export default function BookAppointmentPage() {
               </span>
               <span className="truncate text-xs text-muted-foreground">
                 {dayLabel}
-                {doctorName ? ` · ${doctorName} 선생님` : ""}
+                {doctorLabel ? ` · ${doctorLabel}` : ""}
               </span>
             </div>
             {slots.length === 0 ? (
@@ -446,10 +483,10 @@ export default function BookAppointmentPage() {
             )}
           </div>
 
-          {/* 요약 — 모두 골랐을 때 확인용 */}
-          {deptName && doctorName && selectedSlotLabel && (
+          {/* 요약 — 모두 골랐을 때 확인용. 자동 배정 모드는 의사 자리에 "자동 배정"(Story 5.2). */}
+          {deptName && doctorLabel && selectedSlotLabel && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm">
-              📅 <b>{dayLabel} {selectedSlotLabel}</b> · {deptName} · {doctorName} 선생님으로 예약해요.
+              📅 <b>{dayLabel} {selectedSlotLabel}</b> · {deptName} · {doctorLabel}으로 예약해요.
             </div>
           )}
 
