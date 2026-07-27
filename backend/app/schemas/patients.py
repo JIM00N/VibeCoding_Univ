@@ -6,6 +6,17 @@ from datetime import date
 from pydantic import BaseModel, field_validator
 
 
+def blank_str_to_none(v: object) -> object:
+    """빈 문자열/공백을 None 으로 정규화(빈 문자열 저장 방지) — 스키마 공유 정본(Story 5.4).
+
+    patients(gender·phone)와 medical_records(notes·dosage)가 공유한다 — 모델별 사본 금지.
+    """
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
 class PatientCreate(BaseModel):
     """환자 등록 요청. name 만 필수(스키마 NOT NULL), 나머지는 선택(nullable).
 
@@ -20,12 +31,8 @@ class PatientCreate(BaseModel):
 
     @field_validator("gender", "phone", mode="before")
     @classmethod
-    def _blank_str_to_none(cls, v: object) -> object:
-        # 프런트가 빈 문자열/공백을 보내도 DB 엔 null 로 저장(빈 문자열 저장 방지).
-        if isinstance(v, str):
-            v = v.strip()
-            return v or None
-        return v
+    def _normalize_blank(cls, v: object) -> object:
+        return blank_str_to_none(v)
 
     @field_validator("birth_date", mode="before")
     @classmethod

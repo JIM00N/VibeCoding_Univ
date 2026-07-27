@@ -8,8 +8,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ErrorState } from "@/components/error-state";
 import { RoleContextBar } from "@/components/role-context-bar";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Doctor } from "@/lib/api";
@@ -136,20 +136,6 @@ function SelectSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <Skeleton key={i} className="h-20 w-full rounded-xl" />
       ))}
-    </div>
-  );
-}
-
-// 조회 오류 — 빈 상태와 구분해 "다시 시도"를 제공(백엔드 다운을 "의사 없음"으로 오인 방지).
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed py-16 text-center">
-      <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4">
-        <Button variant="outline" onClick={onRetry}>
-          다시 시도
-        </Button>
-      </div>
     </div>
   );
 }

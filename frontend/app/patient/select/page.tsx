@@ -9,11 +9,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ErrorState } from "@/components/error-state";
 import { RoleContextBar } from "@/components/role-context-bar";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Patient } from "@/lib/api";
+import { orDash } from "@/lib/format";
 import { usePatientIdentity } from "@/lib/patient-identity";
 
 // 성별 역매핑 — DB 는 M/F/null, 화면은 남/여/—(1.3 성별 규약, 1.4 목록과 동일).
@@ -21,11 +22,6 @@ const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
 function genderText(gender: string | null): string {
   return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
 }
-// nullable 표시 필드는 비어 있으면 —.
-function orDash(value: string | null): string {
-  return value && value.trim() ? value : "—";
-}
-
 // 동명이인을 구분할 수 있게 식별 정보를 함께 싣는다(UX-DR9).
 // 이름만으로 등록된 환자(1.3 이 허용 — 생년월일·성별 모두 null)는 표시할 식별 정보가 없어
 // 동명이인이 시각·스크린리더 양쪽에서 완전히 같아진다 → 그땐 등록번호(id)로라도 가른다.
@@ -158,20 +154,6 @@ function SelectSkeleton() {
       {Array.from({ length: 4 }).map((_, i) => (
         <Skeleton key={i} className="h-20 w-full rounded-xl" />
       ))}
-    </div>
-  );
-}
-
-// 조회 오류 — 빈 상태와 구분해 "다시 시도"를 제공(백엔드 다운을 "환자 없음"으로 오인 방지).
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed py-16 text-center">
-      <p className="text-muted-foreground">{message}</p>
-      <div className="mt-4">
-        <Button variant="outline" onClick={onRetry}>
-          다시 시도
-        </Button>
-      </div>
     </div>
   );
 }

@@ -5,16 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-
-def _blank_str_to_none(v: object) -> object:
-    """빈 문자열/공백을 None 으로 정규화(빈 문자열 저장 방지, patients 미러).
-
-    notes 와 처방 dosage 가 공유한다 — 모델별 사본을 늘리지 않는다(deferred-work 경고 이행).
-    """
-    if isinstance(v, str):
-        v = v.strip()
-        return v or None
-    return v
+from app.schemas.patients import blank_str_to_none
 
 
 class PrescriptionCreate(BaseModel):
@@ -34,7 +25,7 @@ class PrescriptionCreate(BaseModel):
     @field_validator("dosage", mode="before")
     @classmethod
     def _normalize_blank(cls, v: object) -> object:
-        return _blank_str_to_none(v)
+        return blank_str_to_none(v)
 
 
 class MedicalRecordCreate(BaseModel):
@@ -59,7 +50,7 @@ class MedicalRecordCreate(BaseModel):
     @field_validator("notes", mode="before")
     @classmethod
     def _normalize_blank(cls, v: object) -> object:
-        return _blank_str_to_none(v)
+        return blank_str_to_none(v)
 
 
 class PrescriptionOut(BaseModel):

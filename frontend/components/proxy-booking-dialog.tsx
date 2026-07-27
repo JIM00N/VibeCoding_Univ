@@ -48,11 +48,7 @@ import {
   type Patient,
 } from "@/lib/api";
 import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
-
-// nullable 표시 필드는 비어 있으면 —(1.4 환자 목록과 같은 표기 규약).
-function orDash(value: string | null): string {
-  return value && value.trim() ? value : "—";
-}
+import { orDash } from "@/lib/format";
 
 // 첫 오류 필드로 스크롤·포커스한다 — 390×844에서 아래까지 스크롤한 채 제출하면 인라인 오류가 전부
 // 화면 밖(위쪽)에 렌더돼 버튼이 먹통인 것처럼 보인다. base-ui 트리거에 ref 를 꽂는 대신 이미 있는

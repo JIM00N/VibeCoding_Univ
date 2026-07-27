@@ -13,7 +13,7 @@ import { toast } from "sonner";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
 import { RoleContextBar } from "@/components/role-context-bar";
-import { SlotPicker, type Slot } from "@/components/slot-picker";
+import { SlotPicker } from "@/components/slot-picker";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -25,80 +25,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError, type Appointment, type Department, type Doctor } from "@/lib/api";
+import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
+import { formatReservedAt } from "@/lib/format";
 import { usePatientIdentity } from "@/lib/patient-identity";
-
-// 병원 시각은 항상 서울 기준이다. 브라우저 로컬 타임존을 쓰면(예: UTC 브라우저) 화면에 보이는
-// "10:30"이 그 브라우저 시각으로 해석돼 실제로는 서울 19:30에 예약된다. 그래서 슬롯 인스턴트
-// 생성·표시를 모두 Asia/Seoul 로 고정한다. 서울은 DST가 없어 항상 UTC+9 라 오프셋을 그대로 박아도 안전.
-const HOSPITAL_TZ = "Asia/Seoul";
-const HOSPITAL_UTC_OFFSET = "+09:00";
-
-// 브라우저 타임존과 무관하게 "서울 기준 오늘"의 YYYY-MM-DD 를 얻는다(en-CA = ISO 형식).
-function seoulTodayYmd(now: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: HOSPITAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
-// 서울 벽시계 시각(h:m)을 +09:00 고정 오프셋으로 만들어 브라우저 무관하게 정확한 UTC 인스턴트를 얻는다.
-// 분 ∈ {0,30}·초 0 이라 백엔드 to_slot()·reserved_at CHECK 를 그대로 통과한다(AD-3).
-function slotsForSeoulDay(ymd: string, startHour = 9, endHour = 18): Slot[] {
-  const out: Slot[] = [];
-  for (let h = startHour; h < endHour; h++) {
-    for (const m of [0, 30]) {
-      const hh = String(h).padStart(2, "0");
-      const mm = String(m).padStart(2, "0");
-      out.push({
-        label: `${hh}:${mm}`,
-        iso: new Date(`${ymd}T${hh}:${mm}:00${HOSPITAL_UTC_OFFSET}`).toISOString(),
-      });
-    }
-  }
-  return out;
-}
-
-function formatReservedAt(iso: string): string {
-  return new Date(iso).toLocaleString("ko-KR", {
-    timeZone: HOSPITAL_TZ,
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatSeoulDayLabel(ymd: string): string {
-  // 정오 앵커를 서울 tz 로 포맷 → 날짜·요일이 브라우저 무관하게 서울 기준으로 나온다.
-  return new Date(`${ymd}T12:00:00${HOSPITAL_UTC_OFFSET}`).toLocaleDateString("ko-KR", {
-    timeZone: HOSPITAL_TZ,
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-  });
-}
-
-// 오늘(서울)부터 days일치의 선택지. 각 날의 정오 앵커에 24h 씩 더해 서울 tz 로 YYYY-MM-DD·라벨을 만든다.
-// 서울은 DST가 없어 24h 스텝이 항상 다음 날 같은 벽시계로 떨어진다. reserved_at 은 timestamptz 라
-// 어느 날짜든 그대로 저장된다(DB 변경 없음).
-function seoulDayOptions(now: Date, days = 7): { ymd: string; label: string }[] {
-  const todayNoon = new Date(`${seoulTodayYmd(now)}T12:00:00${HOSPITAL_UTC_OFFSET}`).getTime();
-  const out: { ymd: string; label: string }[] = [];
-  for (let i = 0; i < days; i++) {
-    const d = new Date(todayNoon + i * 86_400_000);
-    const ymd = new Intl.DateTimeFormat("en-CA", {
-      timeZone: HOSPITAL_TZ,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(d);
-    out.push({ ymd, label: formatSeoulDayLabel(ymd) });
-  }
-  return out;
-}
 
 export default function BookAppointmentPage() {
   const router = useRouter();
@@ -476,10 +405,11 @@ export default function BookAppointmentPage() {
           {/* 30분 슬롯 피커 (필수) */}
           <div className="flex flex-col gap-2">
             <div className="flex items-baseline justify-between gap-2">
-              {/* radiogroup 은 form control 이 아니라 htmlFor 대신 id + aria-labelledby 로 연결한다. */}
-              <Label id="slot-label">
+              {/* radiogroup 은 form control 이 아니라 <label> 대신 span id + aria-labelledby 로
+                  연결한다(6.3 픽스 미러 — 짝 없는 <label> 은 DevTools a11y 이슈를 낸다). */}
+              <span id="slot-label" className="text-sm leading-none font-medium">
                 시간 선택 (30분 단위) <span className="text-destructive">*</span>
-              </Label>
+              </span>
               <span className="truncate text-xs text-muted-foreground">
                 {dayLabel}
                 {doctorName ? ` · ${doctorName} 선생님` : ""}
