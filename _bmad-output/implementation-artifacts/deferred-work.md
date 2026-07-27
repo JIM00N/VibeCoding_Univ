@@ -1,16 +1,18 @@
 # Deferred Work
 
-## Deferred from: code review of 6-3-직원-대리-예약 (2026-07-26)
+> 2026-07-27 Story 5.4(중복 사본 정리)가 사본 수렴류 9건을 처리·삭제했다 — booking-slots 2-소스 ·
+> orDash 4사본 · 짝 없는 slot-label · formatReservedAt 2-소스 · fetch-or-404 4사본 · CAS 409 문구
+> 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 · 의사↔진료과 검증 블록 2-소스.
+> 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
+
+## Deferred from: 5-4-중복-사본-정리 구현 (2026-07-27)
+
+- **`genderText`·`GENDER_LABEL` 3사본** — 성별 역매핑(M/F/null → 남/여/—)이 patient/select · staff/patients · staff/patients/[id] 에 동일 구현으로 존재. 5.4 스토리 대상 목록(회고 액션 #5 + deferred 라우팅 건) 밖이라 스코프 규율상 보류 — orDash 와 같은 방식으로 `lib/format.ts` 이관이 자연스럽다. 다음 정리 기회(또는 해당 화면을 만지는 스토리)에서 처리. [frontend/app/patient/select/page.tsx ↔ frontend/app/staff/patients/page.tsx ↔ frontend/app/staff/patients/[id]/page.tsx]
+- **`ensure_utc` 의 datetime 경계 OverflowError** — 5.4 가 visited_at 인라인 정규화(naive 만 replace)를 공유 `ensure_utc`(항상 `astimezone(utc)`)로 바꾸며, 연도 1/9999 경계의 aware 비-UTC 입력(예: `0001-01-01T00:00:00+09:00`)이 기존 201(저장)에서 500(OverflowError→전역 핸들러)으로 바뀌는 병리 경로가 생겼다(5.4 드리프트 검증 발견, Low). 프런트는 이런 값을 만들 수 없고 크래프트 API 한정 — 필요해지면 ensure_utc 에 경계 가드 또는 400 매핑. [backend/app/slots.py, backend/app/services/medical_records.py]
 
 - **환자 검색이 페이징 없이 전체 환자를 조회·렌더** — `GET /patients`(`backend/app/db/patients.py:22-26`)에 `LIMIT`이 없고 `lib/api.ts:174-180`에도 페이징이 없어, 대리 예약 다이얼로그를 열 때마다 전체 환자 표를 받아 `max-h-48` 스크롤러 안에 전량 `<button>`으로 렌더한다. 시드 3명 규모에선 무해하나 실제 규모에선 매 열림마다 전량 전송 + DOM 수백 노드. 처리 시 서버 `LIMIT`+검색어 필수화 또는 무한 스크롤. [frontend/components/proxy-booking-dialog.tsx (환자 검색), backend/app/db/patients.py]
 - **검색 0건에서 [신규 환자 등록]으로 이탈하면 나머지 입력이 소실되고 복귀 경로가 없음** — 다이얼로그를 벗어나 `/staff/patients/new`로 이동하면 컴포넌트가 언마운트돼 진료과·의사·날짜·시간 선택이 사라지고, 등록 성공 후에도 그 화면에 머물러(`app/staff/patients/new/page.tsx`) 예약 화면으로 돌려보내지 않는다. 환자를 폼 첫 필드로 둔 설계가 피해를 줄이지만(보통 다른 값 입력 전에 이탈) 완전 해소는 아니다. 근본 해결은 다이얼로그 안 인라인 환자 등록(모달 2단계 — UX-DR6 위배)이나 복귀 쿼리(`?returnTo=`). [frontend/components/proxy-booking-dialog.tsx (0건 안내 링크)]
 - **환자 선택·[변경] 시 포커스가 `document.body`로 떨어짐** — 선택 시 검색 블록이 요약 블록으로 통째 교체되는데 포커스 인계가 없어, 키보드 사용자의 다음 Tab이 다이얼로그 처음부터 다시 시작한다. 처리 시 선택 후 [변경] 버튼(또는 진료과 트리거)에 `focus()` 인계. [frontend/components/proxy-booking-dialog.tsx (selectPatient / [변경])]
-
-## Deferred from: 6-3-직원-대리-예약 (2026-07-26, 구현 중 의도적 중복)
-
-- **예약 슬롯 헬퍼 2-소스** — 6.3이 서울 고정 30분 슬롯 헬퍼(`seoulDayOptions`·`slotsForSeoulDay`·`formatSeoulDayLabel`)를 `frontend/lib/booking-slots.ts` 로 새로 만들었으나, 2.1의 로컬 사본 `frontend/app/patient/book/page.tsx:28-99` 를 import 로 이관하지 않았다. 두 정의는 같은 계산(+09:00 고정 오프셋·분 ∈ {0,30})이라 출력 정합 문제는 없고, 환자 예약 화면 동결(add-only 규율) 때문에 손대지 않았다. 정리하려면 book 화면이 `@/lib/booking-slots` 를 import 하도록 교체하면 된다 — `formatReservedAt` 2-소스(2.2 deferred)와 같은 처리·같은 정리 스토리(Epic 3 회고 액션 #2) 대상. [frontend/lib/booking-slots.ts ↔ frontend/app/patient/book/page.tsx:28-99]
-- **`orDash` 3번째 사본** — `frontend/components/proxy-booking-dialog.tsx`가 `app/staff/patients/page.tsx:35-37`의 nullable 표시 헬퍼를 로컬 복제했다(4.2 상세 화면 사본에 이은 3번째). 4줄짜리 순수 함수라 위험은 없지만, 중복 사본 정리 스토리(Epic 3 회고 액션 #2)가 알 수 있게 기록한다. `lib/format.ts`로 이관이 자연스럽다. [frontend/components/proxy-booking-dialog.tsx ↔ frontend/app/staff/patients/page.tsx:35-37]
-- **`patient/book` 슬롯 그룹 라벨의 짝 없는 `<label>`** — 2.1이 슬롯 radiogroup 제목을 `htmlFor` 없는 `<Label id="slot-label">`(실제 `<label>` 엘리먼트)로 렌더해 Chrome DevTools a11y 이슈 "No label associated with a form field"가 뜬다(6.3 구현 중 같은 패턴을 복사했다가 실측에서 발견 → 6.3은 `<span id>`+`aria-labelledby` 로 수정). radiogroup 접근 이름은 `aria-labelledby` 로 정상 제공되므로 기능·SR 영향은 없고 이슈 표시만 남는다. book 화면 동결이라 이관 보류 — 위 헬퍼 정리와 함께 처리. [frontend/app/patient/book/page.tsx:402]
 
 ## Deferred from: code review of 6-1-3역할-진입-의사-대시보드 (2026-07-26)
 
@@ -22,11 +24,6 @@
 
 ## Deferred from: code review of 3-1-확정-예약에-진료-기록-작성-완료-전이 (2026-07-24)
 
-- **fetch-or-404 블록 4-소스** — `fetch_appointment` + 404 "예약을 찾을 수 없어요." 패턴이 4곳(services/appointments.py의 set_appointment_status·set_appointment_doctor·get_appointment, services/medical_records.py) — 3.1이 만든 `get_appointment`(또는 `_fetch_appointment_or_404` 헬퍼)로 3곳 수렴 가능. 문구가 계약 테스트로 고정돼 있어 일괄 정리 스토리에서. [backend/app/services/appointments.py:88-90·121·157, backend/app/services/medical_records.py:35]
-- **CAS 409 문구 3-소스** — "예약 상태가 방금 바뀌었어요…" 60자 문구가 3개 raise 사이트에 중복. 모듈 상수(또는 공유 errors 모듈) 1줄로 수렴 가능. [backend/app/services/appointments.py:137·192, backend/app/services/medical_records.py:81]
-- **`ErrorState` 4번째 사본 — components 승격 임계 도달** — 동일 shell+`다시 시도` 구현이 4페이지에 바이트 중복(신규 NoticeState 는 `role="status"` 가 있는데 기존 3사본은 live-region 부재 — 이미 드리프트 시작). Epic 4 조회 페이지가 5번째를 만들기 전 `components/error-state.tsx` 추출 권장. [frontend/app/staff/appointments/[id]/record/page.tsx:242 외 3곳]
-- **naive→UTC 규약 인라인 2사본** — services/medical_records.py 인라인 정규화 ↔ slots.to_slot 내부(19-20)가 주석으로만 연결. Epic 4(날짜 필터)·5.3(walk-in visited_at) 전에 공유 `ensure_utc()` 또는 `UtcDatetime = Annotated[datetime, AfterValidator]` 로 경계 수렴 권장. [backend/app/services/medical_records.py:59, backend/app/slots.py:19-20]
-- **`_blank_str_to_none` 검증자 2사본** — patients ↔ medical_records 스키마에 동일 검증자 중복(3.2 처방 dosage 가 3번째 후보). 공유 함수/Annotated 타입으로 수렴 가능. [backend/app/schemas/medical_records.py:29, backend/app/schemas/patients.py:23]
 - **가드 pre-fetch 의 4-조인 폭** — `create_medical_record` 가드는 status·doctor_id 만 읽는데 표시용 4-조인 9컬럼 쿼리를 재사용(왕복 자체는 상태별 400 문구 계약상 필요). 최소 셀렉트 `fetch_appointment_status` 분리는 이 규모에선 저우선. [backend/app/services/medical_records.py:33]
 - **저장 성공 직후 이중 제출 창** — 기록 저장 성공 시 `finally`가 `submitting`을 풀고 `router.push` 완료 전까지 버튼이 잠깐 재활성. 재제출해도 서버 가드(완료 400·중복 409)가 막아 무해 — 성공 경로에서 submitting 유지(내비게이션까지)로 정리 가능. [frontend/app/staff/appointments/[id]/record/page.tsx:96-107]
 - **URL id 의 `Number()` 관용 파싱** — `/staff/appointments/0x1F/record` 같은 16진/지수 표기가 `Number()`로 유효 id 가 됨(서버 404 가 최종 방어라 무해). 엄격 파싱은 `/^\d+$/` 검사로. [frontend/app/staff/appointments/[id]/record/page.tsx:29-31]
@@ -40,7 +37,6 @@
 
 ## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
 
-- **의사↔진료과 검증 블록 2-소스** — `set_appointment_doctor`가 `create_appointment`(51-58)의 의사 존재·같은 과 검증(400 문구 2종 포함)을 바이트 중복. `_require_doctor_in_department(doctor_id, hd_id)` 추출로 해소. [backend/app/services/appointments.py:158-165]
 - **표시 조인 SQL 5번째 사본** — `_UPDATE_APPOINTMENT_DOCTOR`가 projection 사본을 4→5개로 늘림. 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:103-120]
 - **프런트 뮤테이션 골격 중복** — `runDoctorChange`/`runStatusChange`가 재진입 가드→pendingId→행 교체→toast→실패 reloadNonce 골격 공유(~-14줄 여지). 로컬 `runMutation` 헬퍼 후보. [frontend/app/staff/appointments/page.tsx:179-221]
 - **거부 문구 인라인 if/elif** — `_reject_message` 헬퍼 스타일 대신 인라인(도달 불가 else 포함). dict.get 한 줄로 8→3줄. [backend/app/services/appointments.py:148-155]
@@ -90,10 +86,6 @@
 - **의사 로드 실패가 toast-only** — `getDoctors` 실패 시 `setDoctors([])` + 일시 toast뿐, 진료과처럼 지속 인라인 오류가 없다. 놓치면 빈 드롭다운만 남음. departments처럼 inline error+재시도 추가. [frontend/app/patient/book/page.tsx:157]
 - **자정 넘긴 stale dayOptions** — 7일 날짜 목록이 마운트 1회 계산이라, 페이지를 자정 넘겨 열어두면 첫 옵션이 어제를 가리킨다. 타이머/포커스 재계산 필요. (2026-07-27 갱신: 5.1이 제출 직전 클라 재검증 + 서버 과거 시각 400 을 넣어 **과거 예약이 실제로 생성되는 위험은 해소** — 남은 것은 표시 신선도뿐이라 심각도 하향.) [frontend/app/patient/book/page.tsx]
 - **`to_slot`(UTC) vs CHECK(세션 tz `extract`) 불일치** — 비-정시 오프셋 세션 tz(+5:45 등)에선 유효 슬롯이 CHECK에 걸려 500. Supabase 기본 UTC라 무해, `slots.py`·AD-3에 문서화됨. 배포 tz 변경 시 재검토. [backend/app/slots.py, db/migrations/003_reserved_at_check.sql]
-
-## Deferred from: code review of 2-2-직원-예약-확정-취소-상태-흐름 (2026-07-22)
-
-- **`formatReservedAt` 중복(2-소스)** — 2.2가 공유 헬퍼 `frontend/lib/format.ts`를 새로 만들었으나 2.1의 로컬 복사본 `frontend/app/patient/book/page.tsx:61`을 import로 이관하지 않았다. ~~두 정의는 바이트 동일~~(2026-07-27 정정: 정본에만 잘못된 ISO 방어 가드(`"—"` 반환)가 있어 **더 이상 바이트 동일이 아니다** — 사본은 Invalid Date 를 노출할 수 있다. 통합 필요성이 오히려 커짐). 스펙 Project Structure Notes가 "미러"를 명시 허용한다. 정리하려면 book 화면이 `@/lib/format`을 import하도록 교체하면 되나 2.1 파일을 손대므로 add-only 규율상 보류. 향후 book 화면을 만질 때 함께 이관. [frontend/lib/format.ts:6 ↔ frontend/app/patient/book/page.tsx:61]
 
 ## Deferred from: code review of 3-2-진료-기록에-처방-추가 (2026-07-25)
 
