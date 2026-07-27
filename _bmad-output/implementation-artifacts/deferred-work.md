@@ -5,6 +5,15 @@
 > fetch-or-404 4사본 · CAS 409 문구 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 ·
 > 의사↔진료과 검증 블록 2-소스. 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
 
+## Deferred from: code review of 5-2-의사-자동-배정 (2026-07-27)
+
+- **환자 단위 중복 예약 가드 부재** — 같은 환자가 같은 시각에 복수 의사에게 예약을 만들 수 있다(appointment 에 환자·시각 유니크 없음, 서비스 검사도 (의사, 슬롯) 점유뿐). 직접 선택 모드에서도 의사만 바꿔 고르면 원래 가능했던 앱 전반 기존 부재 — 5.2 자동 모드는 성공 직후 그 셀이 (교집합 의미론상 참으로) 다시 열리므로 우발 도달성을 높였을 뿐이다. 처리 시 서비스에 환자 단위 충돌 검사(400 한국어) 또는 제출 전 안내. 데모 하드닝류. [backend/app/services/appointments.py, frontend/app/patient/book/page.tsx]
+
+## Deferred from: 5-2-의사-자동-배정 구현 (2026-07-27)
+
+- **자동 배정 taken 사전 표시의 N-호출 교집합** — book 화면 자동 모드는 기존 `GET /availability`를 진료과 의사 수만큼 병렬 호출해 클라이언트에서 교집합(전원 점유 슬롯)을 계산한다(신규 엔드포인트 0 — 5.1 응답 키셋 고정 계약 보존이 이유). 과당 의사 수가 소수(시드 2명)라는 전제의 의도적 설계 — 의사 수가 커지면 진료과 단위 가용성 API(`hospital_department_id` 파라미터 또는 별도 리소스)로 승격. 표시 전용이라 정합성 위험은 없다(서버 409가 진실). [frontend/app/patient/book/page.tsx (가용성 effect)]
+- **표시 조인 SQL 6번째 사본** — `_INSERT_APPOINTMENT_AUTO`가 projection 사본을 5→6개로 늘렸다(2-3 절 기존 항목의 연장 — 의도적 컨벤션 유지, 공유 fragment 추출은 일괄 정리 몫). [backend/app/db/appointments.py]
+
 ## Deferred from: 5-4-중복-사본-정리 구현 (2026-07-27)
 
 - **`genderText`·`GENDER_LABEL` 3사본** — 성별 역매핑(M/F/null → 남/여/—)이 patient/select · staff/patients · staff/patients/[id] 에 동일 구현으로 존재. 5.4 스토리 대상 목록(회고 액션 #5 + deferred 라우팅 건) 밖이라 스코프 규율상 보류 — orDash 와 같은 방식으로 `lib/format.ts` 이관이 자연스럽다. 다음 정리 기회(또는 해당 화면을 만지는 스토리)에서 처리. [frontend/app/patient/select/page.tsx ↔ frontend/app/staff/patients/page.tsx ↔ frontend/app/staff/patients/[id]/page.tsx]

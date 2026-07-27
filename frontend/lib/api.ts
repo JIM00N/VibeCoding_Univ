@@ -54,12 +54,13 @@ export type Appointment = {
   department_name: string;
 };
 
-// 예약 생성 요청(FR-6, P0). 담당 의사 직접 선택 필수라 doctor_id 항상 채워짐.
+// 예약 생성 요청(FR-6). doctor_id 는 직접 선택한 의사 id, null 이면 서버가 그 진료과의
+// 빈 의사를 자동 배정한다(P1, Story 5.2 — 전원 점유면 409). 응답에는 배정 의사가 채워진다.
 // reserved_at 은 30분 격자 슬롯의 ISO-8601 UTC(백엔드 to_slot() 재검증).
 export type AppointmentCreate = {
   patient_id: number;
   hospital_department_id: number;
-  doctor_id: number;
+  doctor_id: number | null;
   reserved_at: string;
 };
 
@@ -235,8 +236,9 @@ export const api = {
     return { doctor_id: doctorId, taken: Array.isArray(data?.taken) ? data.taken : [] };
   },
 
-  /** 예약 생성(FR-6, P0). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다.
-   *  오류는 request 가 4xx {detail} 한국어로 던진다(AD-10). (의사, 슬롯) 충돌은 409(Story 5.1). */
+  /** 예약 생성(FR-6). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다 — doctor_id: null
+   *  이면 서버가 빈 의사를 자동 배정해 응답에 채운다(P1, Story 5.2). 오류는 request 가 4xx
+   *  {detail} 한국어로 던진다(AD-10). (의사, 슬롯) 충돌·과 전원 점유는 409(Story 5.1·5.2). */
   createAppointment: (payload: AppointmentCreate): Promise<Appointment> =>
     request<Appointment>("/appointments", {
       method: "POST",

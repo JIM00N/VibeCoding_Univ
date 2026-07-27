@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from psycopg.errors import ForeignKeyViolation
 
 from app.db import appointments as appointments_db
-from app.db.availability import SlotTakenError
+from app.db import refdata as refdata_db
+from app.db.availability import NoFreeDoctorError, SlotTakenError
 from app.schemas.appointments import (
     AppointmentCreate,
     AppointmentDoctorUpdate,
@@ -34,6 +35,10 @@ _DOCTOR_CHANGE_SOURCE = ("대기", "확정")
 # CAS(compare-and-set) 경합 409 문구 정본(Story 5.4 수렴 — 2.2 원문 그대로, 계약 테스트가 고정).
 # 예약 서비스가 status 를 소유하므로(AD-5) 경합 문구도 여기 산다 — medical_records 가 import 한다.
 CAS_CONFLICT_DETAIL = "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요."
+
+# 생성 두 경로(직접 선택·자동 배정 — Story 5.2)가 공유하는 문구 — 사본 방지(5.4 규율).
+_PATIENT_FK_DETAIL = "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."
+_CREATE_RESULT_LOST_DETAIL = "예약 생성 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
 
 
 def fetch_appointment_or_404(appointment_id: int) -> dict:
@@ -64,11 +69,11 @@ def _require_doctor_in_department(doctor_id: int, hospital_department_id: int) -
 
 
 def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
-    """예약을 생성한다(FR-6, P0). status=대기, doctor_id 채워짐.
+    """예약을 생성한다(FR-6). status=대기, doctor_id 채워짐(직접 선택 또는 자동 배정).
 
     규칙:
     - reserved_at 을 to_slot() 으로 30분 격자에 floor 해 저장 → DB CHECK 통과(AC4, AD-3/AD-9).
-    - 담당 의사 필수(P0 직접 선택). 미지정이면 400 한국어(AC3).
+    - 담당 의사 미선택(None)은 자동 배정(FR-6 P1, Story 5.2) — 그 진료과의 빈 의사를 골라 채운다.
     - 선택 의사가 선택 진료과 소속이어야 한다 — DB FK 가 소속 일치를 강제하지 않으므로 앱이 검증(AD-6).
     - (의사, 슬롯) 충돌은 db 게이트 문이 원자적으로 거부(Story 5.1, FR-15·AD-4) → 409.
     - 과거 시각은 서버가 최종 거부(Story 5.1 AC7) → 400.
@@ -80,12 +85,15 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
     # Story 5.1 AC7: 과거 시각 서버 가드 — 프런트 필터·제출 재검증(표시·UX 층) 뒤의 최종 방어.
     # 슬롯 시작이 지난 진행 중 슬롯(예: 10:14 의 10:00)도 거부해 프런트 필터와 일관된다.
     # 생성 전용 — 의사 변경은 reserved_at 을 바꾸지 않아 과거 예약 재배정을 막지 않는다.
+    # 자동 배정 분기보다 앞 — 과거 슬롯이면 db 를 일절 건드리지 않는다(가드 순서 계약).
     if slot < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="이미 지난 시간이에요. 다른 시간을 골라 주세요.")
 
-    # AC3: 담당 의사 직접 선택 필수(P0). 프런트가 인라인으로 먼저 막지만 서버가 최종 관문.
-    if not payload.doctor_id:
-        raise HTTPException(status_code=400, detail="담당 의사를 선택해 주세요.")
+    # FR-6 P1(Story 5.2): 의사 미선택(None)은 자동 배정 — P0 의 "미선택 400"을 대체한다.
+    # 분기는 `is None` — doctor_id=0 같은 falsy 크래프트 입력은 자동이 아니라 아래 기존
+    # 검증 경로로 흘러 400(없는 의사)이 된다.
+    if payload.doctor_id is None:
+        return _create_appointment_auto(payload, slot)
 
     # AD-6: 의사↔진료과 소속 정합을 앱이 검증(FK 는 존재만 보장).
     _require_doctor_in_department(payload.doctor_id, payload.hospital_department_id)
@@ -107,16 +115,44 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
     except ForeignKeyViolation as exc:
         # 의사·진료과는 위에서 검증했으므로 남은 FK 위반은 사실상 존재하지 않는 patient_id
         # (오래된 localStorage 신원·재시드 후 id 이동 등). 전역 500 대신 친절한 400 한국어로(AD-10).
-        raise HTTPException(
-            status_code=400,
-            detail="선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요.",
-        ) from exc
+        raise HTTPException(status_code=400, detail=_PATIENT_FK_DETAIL) from exc
     if row is None:
         # FK 가 유효하면 조인 결과가 항상 1행이라 도달 불가 — 타입 정직·방어적 가드.
+        raise HTTPException(status_code=500, detail=_CREATE_RESULT_LOST_DETAIL)
+    return _to_appointment_out(row)
+
+
+def _create_appointment_auto(payload: AppointmentCreate, slot: datetime) -> AppointmentOut:
+    """의사 미선택 예약의 자동 배정 경로(FR-6 P1, Story 5.2).
+
+    빈 의사 pick + INSERT 는 db 의 단일 CTE 문(insert_appointment_auto)이 원자로 수행한다 —
+    여기서는 진료과에 의사가 아예 없는 경우만 선검증한다(점유가 아닌 요청 결함 400, 시드는
+    과당 2명이라 데모 도달 불가지만 "전원 점유 409"와 원인이 달라 문구를 구분한다).
+    """
+    if not refdata_db.fetch_doctors(payload.hospital_department_id):
         raise HTTPException(
-            status_code=500,
-            detail="예약 생성 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            status_code=400,
+            detail="이 진료과엔 등록된 의사가 없어요. 다른 진료과를 골라 주세요.",
         )
+    try:
+        row = appointments_db.insert_appointment_auto(
+            payload.patient_id,
+            payload.hospital_department_id,
+            slot,
+        )
+    except NoFreeDoctorError as exc:
+        # 그 슬롯에 과 전 의사 점유(경합 성격 — 409). 프런트는 기존 409 분기(그 셀 taken 갱신)로
+        # 흡수한다. 기존 두 409(생성 충돌·의사 변경 충돌)와 문구로 구분된다.
+        raise HTTPException(
+            status_code=409,
+            detail="이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요.",
+        ) from exc
+    except ForeignKeyViolation as exc:
+        # 의사는 pick 이 보장하므로 남은 FK 위반은 존재하지 않는 patient_id — 직접 선택 경로와 동일 매핑.
+        raise HTTPException(status_code=400, detail=_PATIENT_FK_DETAIL) from exc
+    if row is None:
+        # pick 성공 시 조인 결과가 항상 1행이라 도달 불가 — 타입 정직·방어적 가드.
+        raise HTTPException(status_code=500, detail=_CREATE_RESULT_LOST_DETAIL)
     return _to_appointment_out(row)
 
 

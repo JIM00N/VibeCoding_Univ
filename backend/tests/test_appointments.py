@@ -12,7 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db import appointments as appointments_db
-from app.db.availability import SlotTakenError
+from app.db import refdata as refdata_db
+from app.db.availability import NoFreeDoctorError, SlotTakenError
 from app.main import app
 
 
@@ -153,27 +154,6 @@ def test_create_appointment_already_aligned_time_unchanged(monkeypatch):
 
     assert resp.status_code == 201
     assert captured["reserved_at"] == base
-
-
-def test_create_appointment_missing_doctor_rejected_korean_detail(monkeypatch):
-    # AC3: 담당 의사 미선택 → 400 한국어. db 는 (fetch·insert 모두) 호출되면 안 된다.
-    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
-    monkeypatch.setattr(appointments_db, "insert_appointment", _fail)
-
-    client = TestClient(app)
-    resp = client.post(
-        "/appointments",
-        json={
-            "patient_id": 1,
-            "hospital_department_id": 2,
-            "reserved_at": _future_iso(10, 0),
-        },
-    )
-
-    assert resp.status_code == 400
-    body = resp.json()
-    assert isinstance(body["detail"], str)
-    assert body["detail"] == "담당 의사를 선택해 주세요."
 
 
 def test_create_appointment_doctor_wrong_department_rejected(monkeypatch):
@@ -988,3 +968,211 @@ def test_doctor_update_interpretation_slot_conflict_and_success_paths():
         {"slot_taken": False, "cas_ok": True, "id": 10, "doctor_id": 4}
     )
     assert row == {"id": 10, "doctor_id": 4}
+
+
+# --- Story 5.2: 의사 자동 배정 (미선택 → 자동 배정 · 전원 점유 409 · 빈 과 400) --------
+# 미선택 400("담당 의사를 선택해 주세요.")을 고정하던 기존 테스트는 이 섹션이 대체한다 —
+# FR-6 P1 이 예고한 유일한 의도적 계약 변경(스토리 AC4).
+
+
+def test_create_appointment_auto_assign_returns_201_with_assigned_doctor(monkeypatch):
+    # doctor_id=null → 자동 배정 경로: 지정용 insert 는 절대 호출되지 않고, 자동 문이
+    # (patient, hd, floor 슬롯) 을 받아 배정된 의사로 채운 행을 돌려준다(FR-6 P1).
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "insert_appointment", _fail)
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}, {"id": 4}])
+
+    captured: dict = {}
+
+    def fake_auto(patient_id, hospital_department_id, reserved_at):
+        captured.update(
+            patient_id=patient_id,
+            hospital_department_id=hospital_department_id,
+            reserved_at=reserved_at,
+        )
+        return _fake_row(reserved_at=reserved_at)
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", fake_auto)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            # off-grid 시각 — 자동 경로도 floor 해서 db 에 넘겨야 한다(AD-3).
+            "reserved_at": (base := _future_at(10, 17, 42)).isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["doctor_id"] == 3  # 배정된 의사가 채워진다(응답 모델 무변경, AD-10).
+    assert data["doctor_name"] == "김민재"
+    assert captured["patient_id"] == 1
+    assert captured["hospital_department_id"] == 2
+    assert captured["reserved_at"] == base.replace(minute=0, second=0)
+
+
+def test_create_appointment_auto_assign_field_omitted_same_path(monkeypatch):
+    # doctor_id 필드 자체를 생략해도(스키마 기본 None) 같은 자동 배정 경로다.
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "insert_appointment", _fail)
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}])
+    monkeypatch.setattr(
+        appointments_db,
+        "insert_appointment_auto",
+        lambda patient_id, hospital_department_id, reserved_at: _fake_row(
+            reserved_at=reserved_at
+        ),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "reserved_at": _future_iso(11, 30),
+        },
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["doctor_id"] == 3
+
+
+def test_create_appointment_auto_all_taken_returns_409(monkeypatch):
+    # 그 슬롯에 과 전 의사 점유 → 409. 기존 두 409(생성 충돌·의사 변경 충돌)와 문구로 구분(AC2).
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}, {"id": 4}])
+
+    def no_free(*args, **kwargs):
+        raise NoFreeDoctorError()
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", no_free)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail == "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+
+
+def test_create_appointment_auto_empty_department_returns_400(monkeypatch):
+    # 진료과에 의사 0명 → 점유가 아닌 요청 결함 400(시드는 과당 2명이라 데모 도달 불가 — 500 방지).
+    # 자동 문은 호출되면 안 된다(선검증).
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [])
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", _fail)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "이 진료과엔 등록된 의사가 없어요. 다른 진료과를 골라 주세요."
+
+
+def test_create_appointment_auto_past_slot_returns_400_without_db(monkeypatch):
+    # 과거 시각 가드는 자동 경로에도 선행한다(AC1) — 의사 목록 조회·자동 문 모두 미호출.
+    monkeypatch.setattr(refdata_db, "fetch_doctors", _fail)
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", _fail)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": "2026-07-20T10:00:00Z",  # 고정 과거 — 의도된 입력
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "이미 지난 시간이에요. 다른 시간을 골라 주세요."
+
+
+def test_create_appointment_doctor_zero_uses_existing_validation_path(monkeypatch):
+    # doctor_id=0 은 자동 배정이 아니다(분기는 is None) — 기존 검증 경로에서 "없는 의사" 400.
+    # 종전 falsy 검사에선 "선택해 주세요" 였던 크래프트 입력의 문구 변화(의도·정직 기록, AC4).
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: None)
+    monkeypatch.setattr(appointments_db, "insert_appointment", _fail)
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", _fail)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 0,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "담당 의사를 찾을 수 없어요. 다시 선택해 주세요."
+
+
+def test_auto_insert_interpretation_paths():
+    # 자동 배정 문 결과 해석(순수 함수 — _interpret_doctor_update_row 미러, DB 불필요).
+    # 빈 의사 없음(free_found=false) → NoFreeDoctorError(서비스가 409 로 매핑).
+    with pytest.raises(NoFreeDoctorError):
+        appointments_db._interpret_auto_insert_row({"free_found": False, "id": None})
+    # 정상 삽입 행은 해석 플래그를 벗겨 기존 행 계약 그대로 돌려준다.
+    row = appointments_db._interpret_auto_insert_row(
+        {"free_found": True, "id": 10, "doctor_id": 3}
+    )
+    assert row == {"id": 10, "doctor_id": 3}
+    # 방어 경로: fetchone None·게이트 통과 후 0행 — 기존 None 계약(서비스 500 방어) 유지.
+    assert appointments_db._interpret_auto_insert_row(None) is None
+    assert (
+        appointments_db._interpret_auto_insert_row({"free_found": True, "id": None}) is None
+    )
+
+
+def test_create_appointment_auto_unknown_patient_fk_maps_to_400(monkeypatch):
+    # 자동 경로도 없는 patient_id 의 FK 위반을 전역 500 이 아닌 400 한국어로 매핑해야 한다 —
+    # 직접 선택 경로 테스트(:215)의 자동판(코드리뷰: 커버리지 갭 150-152행).
+    from psycopg.errors import ForeignKeyViolation
+
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}])
+
+    def fk_auto(*args, **kwargs):
+        raise ForeignKeyViolation(
+            'insert or update on "appointment" violates foreign key constraint'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", fk_auto)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 999999,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."
