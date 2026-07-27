@@ -1147,3 +1147,32 @@ def test_auto_insert_interpretation_paths():
     assert (
         appointments_db._interpret_auto_insert_row({"free_found": True, "id": None}) is None
     )
+
+
+def test_create_appointment_auto_unknown_patient_fk_maps_to_400(monkeypatch):
+    # 자동 경로도 없는 patient_id 의 FK 위반을 전역 500 이 아닌 400 한국어로 매핑해야 한다 —
+    # 직접 선택 경로 테스트(:215)의 자동판(코드리뷰: 커버리지 갭 150-152행).
+    from psycopg.errors import ForeignKeyViolation
+
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}])
+
+    def fk_auto(*args, **kwargs):
+        raise ForeignKeyViolation(
+            'insert or update on "appointment" violates foreign key constraint'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", fk_auto)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 999999,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."

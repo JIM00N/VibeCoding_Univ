@@ -129,8 +129,11 @@ export default function BookAppointmentPage() {
   // stale taken 비우기는 진료과·의사·날짜 변경 핸들러가 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
     if (!doctorId) return;
-    // 자동 배정인데 의사 목록이 아직/전혀 없으면 조회 생략 — 옵션 자체가 목록 로드 후에만
-    // 선택 가능하므로 과도기(진료과 전환 직후) 한정이고, 핸들러가 이미 takenMs 를 비웠다.
+    // 자동 배정인데 의사 목록이 비어 있으면 조회 생략. 이 가드의 실제 도달 경로는 과도기가 아니라
+    // **지속 상태**다(코드리뷰) — 진료과 전환 직후는 핸들러가 doctorId 를 먼저 null 로 만들어 윗줄
+    // 가드에서 이미 끊기고, 여기 오는 경우는 의사 로드 실패(catch 의 setDoctors([]))·의사 0명 과에서
+    // 자동 배정을 고른 때다. 이때 taken 사전 표시 없이 제출이 열리지만 서버 400/409 가 백스톱한다
+    // (빈 과 안내 UI 는 2-1 deferred "의사 0명 안내 없음"의 연장 — 스코프 밖).
     if (doctorId === AUTO_DOCTOR && (doctors ?? []).length === 0) return;
     let cancelled = false;
     const daySlots = slotsForSeoulDay(selectedYmd);
@@ -237,10 +240,15 @@ export default function BookAppointmentPage() {
       setCreated(appt);
       // 성공 문구는 정직하게 — 생성 직후 status 는 대기라 "확정"이라 하지 않는다(UX-DR10).
       toast.success("예약을 접수했어요. 상태는 '대기'로 시작해요.");
-      // 방금 잡은 슬롯을 즉시 taken 으로 — 성공 경로도 409 경로와 대칭(리뷰 P1: 안 하면 그 셀이
-      // 계속 "예약 가능"으로 남아 재제출 시 자기 예약과 충돌하는 409 를 받는다). 재조회로 서버와 동기화.
-      const bookedMs = new Date(selectedIso as string).getTime();
-      setTakenMs((prev) => new Set([...(prev ?? []), bookedMs]));
+      // 방금 잡은 슬롯 처리 — **직접 선택 모드만** 즉시 taken(5.1 리뷰 P1: 안 하면 그 셀이 계속
+      // "예약 가능"으로 남아 재제출 시 자기 예약과 충돌하는 409 를 받는다). 자동 모드는 낙관 마킹을
+      // 하지 않는다 — 교집합 의미론상 다른 의사가 비어 있으면 그 셀은 여전히 "예약 가능"이 참이라
+      // 마킹해도 재조회가 곧 되돌려 깜빡임만 남고, 재제출도 409 가 아니라 다른 의사 201 이다
+      // (Story 5.2 코드리뷰 Med). 어느 모드든 아래 재조회가 서버 진실과 동기화한다.
+      if (doctorId !== AUTO_DOCTOR) {
+        const bookedMs = new Date(selectedIso as string).getTime();
+        setTakenMs((prev) => new Set([...(prev ?? []), bookedMs]));
+      }
       setAvailabilityNonce((n) => n + 1);
       // 같은 슬롯 중복 제출 방지 — 다시 예약하려면 슬롯을 새로 고르게 한다.
       setSelectedIso(null);
@@ -375,7 +383,14 @@ export default function BookAppointmentPage() {
                 id="doctor"
                 className="w-full"
                 aria-invalid={doctorErr ? true : undefined}
-                aria-describedby={doctorErr ? "doctor-error" : undefined}
+                aria-describedby={
+                  // 오류문 우선, 자동 배정 선택 시엔 안내 캡션을 연결(SR 에도 동작 설명 전달 — 코드리뷰).
+                  doctorErr
+                    ? "doctor-error"
+                    : doctorId === AUTO_DOCTOR
+                      ? "doctor-auto-hint"
+                      : undefined
+                }
               >
                 <SelectValue
                   placeholder={
@@ -398,7 +413,7 @@ export default function BookAppointmentPage() {
               </SelectContent>
             </Select>
             {doctorId === AUTO_DOCTOR && !doctorErr && (
-              <p className="text-xs text-muted-foreground">
+              <p id="doctor-auto-hint" className="text-xs text-muted-foreground">
                 고른 시간이 빈 선생님 중 한 분이 자동으로 배정돼요.
               </p>
             )}

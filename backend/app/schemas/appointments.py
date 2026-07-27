@@ -7,10 +7,12 @@ from pydantic import BaseModel, ConfigDict
 
 
 class AppointmentCreate(BaseModel):
-    """예약 생성 요청(FR-6, P0). 환자·진료과·의사·시각을 받는다.
+    """예약 생성 요청(FR-6). 환자·진료과·의사·시각을 받는다.
 
-    - doctor_id 는 P0에서 직접 선택 필수지만 스키마상 nullable 로 두고 서비스가 400 한국어로 막는다
-      (Pydantic 필수 누락은 422 리스트 detail 이라 lib/api.ts 가 일반 메시지로 바꾼다, AD-10).
+    - doctor_id: 직접 선택한 의사 id, **None(미선택)이면 서비스가 그 진료과의 빈 의사를 자동
+      배정한다**(P1, Story 5.2 — 전원 점유면 409). 0 등 falsy 유효하지 않은 id 는 자동이 아니라
+      기존 검증 경로에서 400. (Pydantic 필수로 두지 않는 이유: 필수 누락은 422 리스트 detail 이라
+      lib/api.ts 가 일반 메시지로 바꾼다, AD-10.)
     - reserved_at 은 ISO-8601. 서비스가 to_slot() 으로 30분 격자에 floor 해 저장한다(AC4, AD-3).
     """
 
