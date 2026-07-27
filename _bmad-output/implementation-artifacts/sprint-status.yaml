@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-26 # epic-6 done + 회고 완료(액션 6건). 다음: 환경 셋업 문서(액션 #4) → Story 5.1 create-story(범위 확장 반영) → 5.1 완료 직후 중복 사본 정리 스토리
+last_updated: 2026-07-27 # 환경 셋업 문서(Epic 6 액션 #4) 완료 → docs/환경셋업.md. 다음: Story 5.1 create-story(범위 확장 반영) → 5.1 완료 직후 중복 사본 정리 스토리
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -141,7 +141,7 @@ action_items:
   - epic: 3
     action: "환경 셋업 문서화 — .env 생성 절차 + aws-1 Session 풀러 사유(IPv6 전용 직접 호스트) 1페이지 (Epic 2 #3 승계, 저비용·통증 0)"
     owner: "지석(개발)"
-    status: open
+    status: done # 2026-07-27 docs/환경셋업.md 작성 (Epic 6 #4와 동일 액션 — 3에픽 연속 이월 종료)
   - epic: 3
     action: "P0 관통(Epic 4 done) 후 중복 사본 정리 스토리 — fetch-or-404 4사본·CAS 409 문구 3사본·ensure_utc 공유 헬퍼·ErrorState 4곳 이관 (정식 스토리 Task로 내장, 회고 교훈 2 적용)"
     owner: "지석"
@@ -163,7 +163,7 @@ action_items:
   - epic: 6
     action: "환경 셋업 문서 1페이지 마감 (Epic 2 #3 → Epic 3 #2 승계, 3에픽 연속) — .env 절차 + aws-1 Session 풀러 사유 + psql 없는 환경의 DB 직접 접속·원복 방법. Epic 5.1 착수 전까지"
     owner: "지석(개발)"
-    status: open
+    status: done # 2026-07-27 docs/환경셋업.md — 요구 3항목(.env 절차·풀러 사유·psql 없는 DB 접속) 전부 포함, 모든 명령 실측 검증(pytest 105·/departments·next dev·uv+psycopg). 5.1 착수 전 마감 준수
   - epic: 6
     action: "중복 사본 정리 스토리 — 시점 재확정: Epic 5.1 완료 직후 (booking-slots 2-소스·orDash 3사본·formatReservedAt 2-소스·fetch-or-404 4사본·ensure_utc·ErrorState 4곳)"
     owner: "지석"

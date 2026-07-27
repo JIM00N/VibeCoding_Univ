@@ -36,6 +36,8 @@ npm run build
 
 ## 정본 문서
 
+- 로컬 환경 셋업(.env·풀러 사유·psql 없는 DB 접속·원복): `docs/환경셋업.md`
+
 - 아키텍처 결정(AD-1..10): `_bmad-output/planning-artifacts/architecture/architecture-hospital-care-2026-07-13/ARCHITECTURE-SPINE.md`
 - 에픽·AC·횡단 규약: `_bmad-output/planning-artifacts/epics.md`
 - UX 결정(UX-DR*): `_bmad-output/planning-artifacts/ux-designs/ux-hospital-care-2026-07-13/DESIGN.md`
