@@ -6,7 +6,12 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-from app.db.availability import SlotTakenError, slot_taken_sql
+from app.db.availability import (
+    NoFreeDoctorError,
+    SlotTakenError,
+    free_doctor_sql,
+    slot_taken_sql,
+)
 from app.db.pool import get_pool
 
 # 의사의 소속 진료과(hospital_department_id)를 조회한다 — 서비스가 "선택 의사가 선택 진료과 소속인지"
@@ -45,6 +50,39 @@ _INSERT_APPOINTMENT = f"""
            doc.name as doctor_name,
            d.name   as department_name
     from taken t
+    left join inserted i                    on true
+    left join public.patient p              on p.id  = i.patient_id
+    left join public.hospital_department hd on hd.id = i.hospital_department_id
+    left join public.department d           on d.id  = hd.department_id
+    left join public.doctor doc             on doc.id = i.doctor_id
+"""
+
+
+# 자동 배정 삽입(Story 5.2, FR-6 P1·AD-4) — 빈 의사 pick 과 INSERT 가 같은 SQL 문이다.
+# free_doctor CTE(조각은 db/availability.py 한 벌)가 진료과 의사 중 그 슬롯이 빈 의사를
+# id 오름차순 1명 고르고, INSERT 는 그 결과 행에서만 select 하므로 전원 점유면 0행이다 —
+# pick 이 곧 충돌 검사라 별도 taken 게이트가 없다(같은 문 안 = 단일 세션 원자, TOCTOU 는
+# _INSERT_APPOINTMENT 와 동일하게 범위 밖). CTE 는 다중 참조라 materialize 1회 — inserted 와
+# 최종 select 의 free_found 가 같은 pick 결과를 본다.
+# 최종 SELECT 는 free_found 플래그 1행을 항상 돌려준다(전원 점유 시 NoFreeDoctorError 로 변환).
+# 표시 조인은 _INSERT_APPOINTMENT 미러(표시 조인 사본 6번째 — 의도적 컨벤션, 추출은 deferred).
+_INSERT_APPOINTMENT_AUTO = f"""
+    with free_doctor as (
+        select fd.id
+        from {free_doctor_sql("%(reserved_at)s")} fd
+    ),
+    inserted as (
+        insert into public.appointment (patient_id, hospital_department_id, doctor_id, reserved_at, status)
+        select %(patient_id)s, %(hospital_department_id)s, fd.id, %(reserved_at)s, '대기'
+        from free_doctor fd
+        returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
+    )
+    select exists (select 1 from free_doctor) as free_found,
+           i.id, i.patient_id, i.hospital_department_id, i.doctor_id, i.reserved_at, i.status,
+           p.name   as patient_name,
+           doc.name as doctor_name,
+           d.name   as department_name
+    from (select 1) one
     left join inserted i                    on true
     left join public.patient p              on p.id  = i.patient_id
     left join public.hospital_department hd on hd.id = i.hospital_department_id
@@ -252,6 +290,48 @@ def insert_appointment(
     if row["id"] is None:
         return None  # 게이트 통과 후 삽입 0행 — 도달 불가, 방어적 가드.
     return row
+
+
+def _interpret_auto_insert_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """자동 배정 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상, _interpret_doctor_update_row 미러).
+
+    free_found=false → 진료과 전 의사 점유(또는 빈 과 — 서비스 선검증이 구분) → NoFreeDoctorError.
+    """
+    if row is None:
+        return None  # fetchone 계약상 가능성 정직 반영(최종 select 가 항상 1행이라 도달 불가).
+    if not row.pop("free_found"):
+        raise NoFreeDoctorError()
+    if row["id"] is None:
+        return None  # pick 성공 후 삽입 0행 — 도달 불가, 방어적 가드(서비스 500 방어 유지).
+    return row
+
+
+def insert_appointment_auto(
+    patient_id: int,
+    hospital_department_id: int,
+    reserved_at: datetime,
+) -> dict[str, Any] | None:
+    """의사 미선택 예약을 자동 배정으로 삽입하고 표시 필드까지 조인한 행(dict)을 반환한다(Story 5.2).
+
+    진료과 의사 중 그 슬롯이 빈 의사를 id 오름차순 1명 골라 같은 문 안에서 삽입한다 — pick 이
+    곧 충돌 검사다. 전원 점유면 NoFreeDoctorError(서비스가 409 로 매핑). 진료과에 의사가 아예
+    없어도 같은 예외가 되므로 서비스가 선검증으로 400 을 구분한다. FK 위반(없는 환자)은 psycopg
+    예외로 올라간다. 반환 계약은 insert_appointment 와 동일한 "행 dict | None". 파라미터화 SQL.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                _INSERT_APPOINTMENT_AUTO,
+                {
+                    "patient_id": patient_id,
+                    "hospital_department_id": hospital_department_id,
+                    "reserved_at": reserved_at,
+                    # 생성은 자기 행이 없다 — 조각을 한 벌로 유지하기 위한 nullable 파라미터.
+                    "exclude_appointment_id": None,
+                },
+            )
+            row = cur.fetchone()
+    return _interpret_auto_insert_row(row)
 
 
 def fetch_appointments() -> list[dict[str, Any]]:

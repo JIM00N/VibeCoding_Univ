@@ -29,6 +29,12 @@ class SlotTakenError(Exception):
     """
 
 
+class NoFreeDoctorError(Exception):
+    """진료과 전 의사가 그 슬롯에 점유 — 자동 pick 이 빈 의사를 못 찾았다. 서비스가 409 로
+    매핑한다(Story 5.2 자동 배정). 5.3 walk-in 의 "빈 의사 없으면 거부"도 이 예외를 쓴다.
+    """
+
+
 # 슬롯 floor 식 — SQL 쪽 유일한 정의(AD-3; Python 쪽은 app/slots.py to_slot 이 미러).
 # date_bin 은 절대시간 연산이라 세션 TimeZone 과 무관하다 — date_trunc('hour') 는 세션 tz 를
 # 타서 비정시 오프셋 tz 에서 어긋난다. PG14+ 내장(Supabase 충족). {col} 자리에 컬럼/식을 넣는다.
@@ -39,31 +45,52 @@ SLOT_EXPR = "date_bin('30 minutes', {col}, timestamptz '2000-01-01 00:00:00+00')
 # %(exclude_appointment_id)s 는 의사 변경의 자기 행 제외용 — 생성·조회는 None 을 넘긴다
 # (조각을 한 벌로 유지하기 위한 nullable 파라미터). 파라미터는 named(%(name)s) — 이 조각을
 # 내장하는 문 전체가 named 로 통일해야 한다(한 문장 안 positional 혼용 금지).
-OCCUPIED_SOURCES = """
+# doctor_sql 은 판정 대상 의사의 SQL 표현식 — 기본값(파라미터)이면 기존 소비자와 생성 SQL 이
+# 동일하고, 자동 pick(Story 5.2)은 상관 컬럼("d.id")을 넣어 의사별 판정으로 재사용한다(조각 1벌).
+def occupied_sources_sql(doctor_sql: str = "%(doctor_id)s") -> str:
+    return f"""
         select a.reserved_at as occupied_at
         from public.appointment a
-        where a.doctor_id = %(doctor_id)s
+        where a.doctor_id = {doctor_sql}
           and a.status in ('대기', '확정')
           and (%(exclude_appointment_id)s::bigint is null or a.id <> %(exclude_appointment_id)s)
         union all
         select m.visited_at
         from public.medical_record m
-        where m.doctor_id = %(doctor_id)s
+        where m.doctor_id = {doctor_sql}
           and m.appointment_id is null
 """
 
 
-def slot_taken_sql(slot_sql: str) -> str:
+def slot_taken_sql(slot_sql: str, doctor_sql: str = "%(doctor_id)s") -> str:
     """점유 여부 point 판정(exists) 조각을 만든다 — 게이트 문의 taken CTE 가 내장한다.
 
     slot_sql 은 비교할 시각의 SQL 표현식(예: "%(reserved_at)s", "(select reserved_at from target)").
+    doctor_sql 은 판정 대상 의사의 SQL 표현식(기본 = %(doctor_id)s 파라미터, 자동 pick 은 "d.id").
     비교 **양변 모두** floor 식을 적용한다 — visited_at 은 30분 CHECK 가 없고, 저장 형태에
     의존하지 않는 것이 AD-3 규칙이다(원시 timestamp 직접 비교 금지).
     """
     return f"""exists (
         select 1
-        from ({OCCUPIED_SOURCES}) o
+        from ({occupied_sources_sql(doctor_sql)}) o
         where {SLOT_EXPR.format(col="o.occupied_at")} = {SLOT_EXPR.format(col=slot_sql)}
+    )"""
+
+
+def free_doctor_sql(slot_sql: str) -> str:
+    """진료과(%(hospital_department_id)s) 의사 중 slot_sql 슬롯이 빈 의사 1명을 고르는 서브쿼리
+    조각 — Story 5.2 자동 배정·5.3 walk-in 이 공유한다(AD-4 "같은 헬퍼", 재정의 금지).
+
+    pick 은 id 오름차순 결정적(테스트·실증 용이) — 부하 분산은 YAGNI. 진료과에 의사가 아예
+    없어도 0행이라, "빈 과"와 "전원 점유"의 구분(400 vs 409)은 서비스 선검증이 담당한다.
+    """
+    return f"""(
+        select d.id
+        from public.doctor d
+        where d.hospital_department_id = %(hospital_department_id)s
+          and not {slot_taken_sql(slot_sql, doctor_sql="d.id")}
+        order by d.id
+        limit 1
     )"""
 
 
@@ -76,7 +103,7 @@ _SELECT_TAKEN_SLOTS = f"""
     select s.slot
     from (
         select distinct {SLOT_EXPR.format(col="o.occupied_at")} as slot
-        from ({OCCUPIED_SOURCES}) o
+        from ({occupied_sources_sql()}) o
     ) s
     where s.slot >= %(start)s
       and s.slot < %(end)s
