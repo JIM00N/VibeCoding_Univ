@@ -6,11 +6,12 @@ lifespan(풀 오픈)을 트리거하지 않도록 TestClient 를 context manager
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from app.db import appointments as appointments_db
+from app.db.availability import SlotTakenError
 from app.main import app
 
 
@@ -34,6 +35,19 @@ def _fail(*args, **kwargs):
     raise AssertionError("이 db 함수는 호출되면 안 됩니다(서비스 검증에서 먼저 막힘).")
 
 
+def _future_at(hour: int, minute: int, second: int = 0) -> datetime:
+    """내일(UTC)의 지정 시각 — Story 5.1 과거 시각 가드(생성 전용)를 통과하는 미래 시각.
+
+    생성 경로 테스트는 고정 날짜를 쓰면 시간이 지나 과거가 되는 순간 400 으로 깨진다(테스트 부패).
+    """
+    base = datetime.now(timezone.utc) + timedelta(days=1)
+    return base.replace(hour=hour, minute=minute, second=second, microsecond=0)
+
+
+def _future_iso(hour: int, minute: int, second: int = 0) -> str:
+    return _future_at(hour, minute, second).isoformat().replace("+00:00", "Z")
+
+
 def test_create_appointment_returns_flat_canonical_shape(monkeypatch):
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
 
@@ -54,7 +68,7 @@ def test_create_appointment_returns_flat_canonical_shape(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T01:30:00Z",
+            "reserved_at": _future_iso(1, 30),
         },
     )
 
@@ -100,7 +114,7 @@ def test_create_appointment_floors_reserved_at_to_slot(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T10:17:42Z",
+            "reserved_at": _future_iso(10, 17, 42),
         },
     )
 
@@ -109,7 +123,7 @@ def test_create_appointment_floors_reserved_at_to_slot(monkeypatch):
     # 분 ∈ {0,30}, 초 = 0 (appointment_reserved_at_slot_check 통과 조건).
     assert saved.minute in (0, 30)
     assert saved.second == 0
-    assert saved == datetime(2026, 7, 20, 10, 0, 0, tzinfo=timezone.utc)
+    assert saved == _future_at(10, 0)
 
 
 def test_create_appointment_already_aligned_time_unchanged(monkeypatch):
@@ -129,12 +143,12 @@ def test_create_appointment_already_aligned_time_unchanged(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T14:30:00Z",
+            "reserved_at": _future_iso(14, 30),
         },
     )
 
     assert resp.status_code == 201
-    assert captured["reserved_at"] == datetime(2026, 7, 20, 14, 30, 0, tzinfo=timezone.utc)
+    assert captured["reserved_at"] == _future_at(14, 30)
 
 
 def test_create_appointment_missing_doctor_rejected_korean_detail(monkeypatch):
@@ -148,7 +162,7 @@ def test_create_appointment_missing_doctor_rejected_korean_detail(monkeypatch):
         json={
             "patient_id": 1,
             "hospital_department_id": 2,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
 
@@ -170,7 +184,7 @@ def test_create_appointment_doctor_wrong_department_rejected(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 1,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
 
@@ -192,7 +206,7 @@ def test_create_appointment_unknown_doctor_rejected(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 999,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
 
@@ -208,7 +222,7 @@ def test_create_appointment_missing_required_field_returns_422():
         json={
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
     assert resp.status_code == 422
@@ -234,7 +248,7 @@ def test_create_appointment_unknown_patient_fk_maps_to_400(monkeypatch):
             "patient_id": 999999,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
 
@@ -256,7 +270,7 @@ def test_create_appointment_none_row_maps_to_500(monkeypatch):
             "patient_id": 1,
             "hospital_department_id": 2,
             "doctor_id": 3,
-            "reserved_at": "2026-07-20T10:00:00Z",
+            "reserved_at": _future_iso(10, 0),
         },
     )
 
@@ -842,3 +856,98 @@ def test_get_single_appointment_unknown_returns_404(monkeypatch):
     assert resp.status_code == 404
     # FastAPI 기본 "Not Found" 가 아니라 서비스의 한국어 {detail} 이어야 한다(AD-10).
     assert resp.json()["detail"] == "예약을 찾을 수 없어요."
+
+
+# --- Story 5.1: 가용성 충돌 검사 (충돌 409 · 과거 400 · 의사 변경 재검사) --------
+
+
+def test_create_appointment_slot_conflict_returns_409(monkeypatch):
+    # 이미 점유된 (의사, 슬롯) → db 게이트가 SlotTakenError → 409 한국어(문구 정본은 서버).
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+
+    def taken_insert(*args, **kwargs):
+        raise SlotTakenError()
+
+    monkeypatch.setattr(appointments_db, "insert_appointment", taken_insert)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 3,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
+
+
+def test_create_appointment_past_slot_returns_400_without_db(monkeypatch):
+    # 과거 시각 서버 가드(AC7) — 6.3 High "지난 슬롯 예약 가능"의 서버측 마감.
+    # 가드는 to_slot 직후·의사 검증 이전이므로 db 는 일절 호출되면 안 된다.
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "insert_appointment", _fail)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 3,
+            "reserved_at": "2026-07-20T10:00:00Z",  # 고정 과거 — 이 테스트의 의도된 입력
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "이미 지난 시간이에요. 다른 시간을 골라 주세요."
+
+
+def test_change_doctor_slot_conflict_returns_409_with_doctor_message(monkeypatch):
+    # 새 의사가 그 슬롯에 이미 점유 → 409. CAS 409("예약 상태가 방금 바뀌었어요…")와 문구로 구분.
+    monkeypatch.setattr(
+        appointments_db,
+        "fetch_appointment",
+        lambda i: _fake_row(status="대기", doctor_id=3),
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
+
+    def taken_update(*args, **kwargs):
+        raise SlotTakenError()
+
+    monkeypatch.setattr(appointments_db, "update_appointment_doctor", taken_update)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail == "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요."
+
+
+def test_change_doctor_past_appointment_still_allowed(monkeypatch):
+    # 과거 시각 가드는 생성 전용(AC7) — 의사 변경은 reserved_at 을 바꾸지 않으므로 과거 예약도
+    # 재배정 가능해야 한다(_fake_row 기본 reserved_at 은 과거). db 시그니처도 기존 그대로임을 고정.
+    monkeypatch.setattr(
+        appointments_db,
+        "fetch_appointment",
+        lambda i: _fake_row(status="대기", doctor_id=3),
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_doctor",
+        lambda appointment_id, doctor_id, allowed_sources: _fake_row(
+            doctor_id=doctor_id, doctor_name="박서연"
+        ),
+    )
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 200
+    assert resp.json()["doctor_id"] == 4

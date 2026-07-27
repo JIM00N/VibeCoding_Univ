@@ -63,6 +63,9 @@ export type AppointmentCreate = {
   reserved_at: string;
 };
 
+// 가용성 정규 응답 모델(Story 5.1, FR-15). taken = 점유된 30분 슬롯 시작 시각(ISO UTC) 목록.
+export type Availability = { doctor_id: number; taken: string[] };
+
 // 약 정규 응답 모델(Story 3.2). 시드 전용 참조 데이터(FR-13) — unit 은 표시에 쓰지 않는 선택 필드.
 export type Drug = { id: number; name: string; unit: string | null };
 
@@ -113,6 +116,19 @@ export type MedicalRecordCreate = {
   prescriptions: PrescriptionCreate[];
 };
 
+// 상태 코드를 실은 API 오류(Story 5.1). Error 서브클래스라 기존 `err instanceof Error` catch 는
+// 전부 무수정 호환되고, 새 코드만 status 로 분기한다(예: 409 슬롯 충돌 → 그 셀 taken 갱신).
+// 문구 정본은 서버 {detail}(AD-10) — message 는 서버 한국어를 그대로 담는다.
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -140,7 +156,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // 본문이 JSON 이 아니면 기본 메시지 유지.
     }
-    throw new Error(detail);
+    throw new ApiError(detail, res.status);
   }
 
   // 성공 응답: 빈 본문·비-JSON 본문을 방어(성공 경로의 res.json() 미가드 예외 방지).
@@ -203,8 +219,24 @@ export const api = {
     return Array.isArray(data) ? data : [];
   },
 
+  /** 의사의 점유 슬롯 조회(Story 5.1, FR-15). [start, end) ISO UTC 범위 — 슬롯 피커 taken 사전
+   *  표시용. 매칭은 문자열 비교가 아니라 epoch ms 정규화로(서버 "+00:00" vs 프런트 "Z" 표기 차 방어).
+   *  이 조회는 예방일 뿐 — 최종 차단은 제출 시 서버 409 가 담당한다(비관적 저장, UX-DR7). */
+  getAvailability: async (
+    doctorId: number,
+    startIso: string,
+    endIso: string,
+  ): Promise<Availability> => {
+    const query =
+      `doctor_id=${encodeURIComponent(String(doctorId))}` +
+      `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`;
+    const data = await request<Availability>(`/availability?${query}`);
+    // 다른 조회와 동일한 방어 — taken 이 배열이 아니면 빈 배열로 정규화(화면 크래시 방지).
+    return { doctor_id: doctorId, taken: Array.isArray(data?.taken) ? data.taken : [] };
+  },
+
   /** 예약 생성(FR-6, P0). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다.
-   *  오류는 request 가 4xx {detail} 한국어로 던진다(AD-10). 슬롯 충돌 검사는 Epic 5. */
+   *  오류는 request 가 4xx {detail} 한국어로 던진다(AD-10). (의사, 슬롯) 충돌은 409(Story 5.1). */
   createAppointment: (payload: AppointmentCreate): Promise<Appointment> =>
     request<Appointment>("/appointments", {
       method: "POST",
@@ -251,7 +283,7 @@ export const api = {
 
   /** 담당 의사 변경(재배정, FR-7 P0). 성공 시 갱신된 예약(정규 모델 — 새 doctor_id·doctor_name)을
    *  돌려준다. 같은 과 아님·완료/취소 예약·경합(409) 등은 request 가 4xx {detail} 한국어로 던진다.
-   *  (의사, 슬롯) 가용성 재검사는 Epic 5 — P0는 갱신만. */
+   *  새 의사의 (의사, 슬롯) 점유 충돌도 409(Story 5.1) — 화면은 기존 toast 경로가 문구를 표시한다. */
   updateAppointmentDoctor: (id: number, doctorId: number): Promise<Appointment> =>
     request<Appointment>(`/appointments/${id}/doctor`, {
       method: "PATCH",
