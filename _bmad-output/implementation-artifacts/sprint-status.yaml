@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-27 # 5-2 의사 자동 배정 dev-story 완료 → review (pytest 125·curl 8종·브라우저+모바일 실측·원복 완료. free_doctor_sql/NoFreeDoctorError 는 5.3 공유 면)
+last_updated: 2026-07-27 # 5-2 코드리뷰 완료(4층+적대검증, Patch 6·Defer 1·Dismiss 0 반영, pytest 126) → PR #23 생성, 머지 승인 대기. 머지 후 배포·라이브 실측 → done
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
