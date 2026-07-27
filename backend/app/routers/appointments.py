@@ -16,9 +16,9 @@ router = APIRouter(tags=["appointments"])
 
 @router.post("/appointments", response_model=AppointmentOut, status_code=201)
 def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
-    """환자 예약 생성(FR-6, P0). 생성된 예약을 정규 모델(status=대기)로 반환(201).
+    """예약 생성(FR-6 — 환자·직원 대리 공용 진입점). 정규 모델(status=대기)로 반환(201).
 
-    슬롯 충돌 검사는 Epic 5(FR-15) — P0는 검사 없이 생성한다.
+    (의사, 슬롯) 충돌은 409, 과거 시각은 400 으로 거부한다(Story 5.1, FR-15 — 검증은 서비스·db 게이트 소유).
     """
     return appointments_service.create_appointment(payload)
 
@@ -32,7 +32,7 @@ def list_appointments(
     - 파라미터 없음: 직원 전체 목록(FR-7, 최신순) — 기존 계약 그대로(회귀 없음).
     - ?patient_id=: 그 환자의 예약만(Story 4.1, FR-11·AD-8, reserved_at desc). 앱 레벨 필터·보안 아님.
     - ?doctor_id=: 그 의사에게 배정된 예약만(Story 6.1, FR-17·AD-8, reserved_at desc). 앱 레벨 필터·보안 아님.
-    슬롯 충돌/점유는 Epic 5.
+    점유 슬롯 사전 조회는 GET /availability(Story 5.1)가 담당한다.
     """
     return appointments_service.list_appointments(patient_id, doctor_id)
 
@@ -65,6 +65,6 @@ def update_appointment_doctor(
     """담당 의사 변경(재배정, FR-7 P0) — doctor_id 만 갱신하고 status 는 건드리지 않는다(AD-5).
 
     같은 진료과의 다른 의사만 허용(검증은 서비스 소유). 갱신된 예약을 정규 모델로 반환한다.
-    (의사, 슬롯) 가용성 재검사는 Epic 5(FR-7 P1) — P0는 갱신만.
+    새 의사의 (의사, 슬롯) 점유는 자기 행 제외로 재검사해 충돌이면 409(Story 5.1, FR-7 P1).
     """
     return appointments_service.set_appointment_doctor(appointment_id, payload)

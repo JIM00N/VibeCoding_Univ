@@ -10,8 +10,9 @@
 // 시각에 굳으면, 화면을 오래 열어둔 접수 데스크에서 이미 지난 슬롯이 그대로 예약 가능해진다
 // (코드리뷰 4층 공통 지적). 닫을 때 resetForm 도 함께 걸어 두 겹으로 막는다.
 //
-// ⚠️ (의사, 슬롯) 가용성 충돌 검사·taken 셀·walk-in 즉시 진료는 Epic 5 — P0는 2.1과 동일하게
-//    검사 없이 생성한다. 단 "이미 지난 시각"만은 제출 직전에 다시 확인한다(서버에 과거 시각 가드 없음).
+// Story 5.1(FR-15): (의사, 날짜) 선택 시 점유 슬롯을 받아 taken 셀로 그리고, 제출 충돌(409)은
+// red 인라인 + 그 셀 taken 갱신으로 처리한다(환자 예약 화면과 동일 규칙). 열 때마다 remount 라
+// 가용성도 "여는 시점" 기준으로 신선하다. walk-in 즉시 진료는 Epic 5.3.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -38,7 +39,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, type Appointment, type Department, type Doctor, type Patient } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  type Appointment,
+  type Department,
+  type Doctor,
+  type Patient,
+} from "@/lib/api";
 import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
 
 // nullable 표시 필드는 비어 있으면 —(1.4 환자 목록과 같은 표기 규약).
@@ -93,6 +101,15 @@ export function ProxyBookingDialog({
 
   const [selectedYmd, setSelectedYmd] = useState<string | null>(null);
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
+
+  // 점유 슬롯(epoch ms, Story 5.1) — null 이면 미조회/조회 실패(taken 없이 렌더). nonce 는 409 후 재조회.
+  const [takenMs, setTakenMs] = useState<ReadonlySet<number> | null>(null);
+  const [availabilityNonce, setAvailabilityNonce] = useState(0);
+  // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(리뷰 P8).
+  const selectedIsoRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIsoRef.current = selectedIso;
+  }, [selectedIso]);
 
   // 인라인 검증 오류 (AC5)
   const [patientErr, setPatientErr] = useState<string | null>(null);
@@ -200,6 +217,41 @@ export function ProxyBookingDialog({
     };
   }, [deptId, doctorNonce]);
 
+  // (의사, 날짜)를 고르면 그 날의 점유 슬롯을 미리 받아 taken 셀로 그린다(Story 5.1, UX-DR3).
+  // 열렸을 때만 조회한다(닫힌 채 네트워크 금지 규율). 조회 실패는 치명 아님 — taken 없이 렌더하고
+  // 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
+  // stale taken 비우기는 진료과·의사·날짜 변경 핸들러·resetForm 이 담당한다(effect 동기 setState 린트 금지).
+  useEffect(() => {
+    if (!open || !doctorId) return;
+    let cancelled = false;
+    const daySlots = slotsForSeoulDay(effectiveYmd);
+    const startIso = daySlots[0].iso;
+    // 범위는 [첫 슬롯, 마지막 슬롯 + 30분) — 마지막 슬롯의 점유까지 포함한다.
+    const endIso = new Date(
+      new Date(daySlots[daySlots.length - 1].iso).getTime() + 1_800_000,
+    ).toISOString();
+    api
+      .getAvailability(Number(doctorId), startIso, endIso)
+      .then((av) => {
+        if (cancelled) return;
+        const next = new Set(av.taken.map((t) => new Date(t).getTime()));
+        setTakenMs(next);
+        // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(리뷰 P8).
+        const cur = selectedIsoRef.current;
+        if (cur && next.has(new Date(cur).getTime())) {
+          setSelectedIso(null);
+          setSlotErr("고른 시간이 그새 예약됐어요. 다른 시간을 골라 주세요.");
+        }
+      })
+      .catch(() => {
+        // 조회 실패 시 이전 스냅샷(409로 확인된 마킹 포함)을 보존한다 — null 리셋은 방금 확인한
+        // 충돌 셀까지 되살린다(리뷰 P3). 미조회 상태면 어차피 null(조용한 강등 유지).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, doctorId, effectiveYmd, availabilityNonce]);
+
   // base-ui Select 계약: Root 에 items 를 넘겨야 SelectValue 라벨이 렌더된다(2.1·2.3이 겪은 함정).
   const deptItems = useMemo(
     () => Object.fromEntries((departments ?? []).map((d) => [String(d.id), d.name])),
@@ -235,6 +287,7 @@ export function ProxyBookingDialog({
     setDoctorId(null);
     setSelectedYmd(null);
     setSelectedIso(null);
+    setTakenMs(null);
     setPatientErr(null);
     setDeptErr(null);
     setDoctorErr(null);
@@ -267,6 +320,7 @@ export function ProxyBookingDialog({
     setDoctors(null);
     setDoctorsLoading(true);
     setDoctorLoadError(null);
+    setTakenMs(null); // 이전 의사의 점유 표시가 남지 않게(새 의사 선택 시 재조회).
     setDeptErr(null);
     setDoctorErr(null);
   }
@@ -276,6 +330,7 @@ export function ProxyBookingDialog({
     if (v === effectiveYmd) return;
     setSelectedYmd(v);
     setSelectedIso(null);
+    setTakenMs(null); // 이전 날짜의 점유 표시가 새 날짜에 비치지 않게(effect 가 재조회).
     setSlotErr(null);
   }
 
@@ -303,8 +358,8 @@ export function ProxyBookingDialog({
       );
       firstErrorId ??= "proxy-slot-label";
     } else if (new Date(selectedIso).getTime() <= new Date().getTime()) {
-      // 다이얼로그를 오래 열어두면 고를 때 미래였던 슬롯이 지나간다. 서버에 과거 시각 가드가 없어
-      // 여기서 막지 않으면 과거 예약이 그대로 생성된다.
+      // 다이얼로그를 오래 열어두면 고를 때 미래였던 슬롯이 지나간다 — 제출 직전 재검증(UX 층).
+      // Story 5.1부터 서버에도 과거 시각 가드(400)가 있어 최종 방어는 서버가 담당한다.
       setSlotErr("고른 시간이 이미 지났어요. 다른 시간을 골라 주세요.");
       setSelectedIso(null);
       firstErrorId ??= "proxy-slot-label";
@@ -332,8 +387,21 @@ export function ProxyBookingDialog({
       resetForm();
       onOpenChange(false);
     } catch (err) {
-      // 4xx {detail} 한국어를 그대로 보여준다(AD-10). 실패해도 닫지 않아 입력이 남는다(AC5).
-      toast.error(err instanceof Error ? err.message : "예약을 만들지 못했어요. 다시 시도해 주세요.");
+      if (err instanceof ApiError && err.status === 409) {
+        // 슬롯 충돌(Story 5.1, UX-DR7 도메인 거부) — 서버 detail 그대로 red 인라인 + 그 셀 즉시
+        // taken + 선택 해제, 재조회로 다른 셀도 동기화한다. 다이얼로그는 닫지 않는다(입력 보존).
+        setSlotErr(err.message);
+        const failedMs = new Date(selectedIso).getTime();
+        setTakenMs((prev) => new Set([...(prev ?? []), failedMs]));
+        setSelectedIso(null);
+        setAvailabilityNonce((n) => n + 1);
+        revealField("proxy-slot-label");
+      } else {
+        // 4xx {detail} 한국어를 그대로 보여준다(AD-10). 실패해도 닫지 않아 입력이 남는다(AC5).
+        toast.error(
+          err instanceof Error ? err.message : "예약을 만들지 못했어요. 다시 시도해 주세요.",
+        );
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -533,8 +601,12 @@ export function ProxyBookingDialog({
               items={doctorItems}
               value={doctorId}
               onValueChange={(v) => {
+                if (v === doctorId) return; // 동일값 재발화 가드 — taken 을 불필요하게 지우지 않는다.
                 setDoctorId(v as string);
                 setDoctorErr(null);
+                // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(리뷰 P2 — false-block 방향은
+                // 서버 백스톱이 없다). 새 응답이 오면 effect 가 다시 채운다.
+                setTakenMs(null);
               }}
               disabled={!deptId || doctorsLoading || doctorsEmpty}
             >
@@ -623,7 +695,7 @@ export function ProxyBookingDialog({
             </Select>
           </div>
 
-          {/* 30분 슬롯 피커 (필수) — 2.1과 같은 컴포넌트·같은 상태(available/selected). */}
+          {/* 30분 슬롯 피커 (필수) — 2.1과 같은 컴포넌트. Story 5.1: taken(예약됨) 3상태. */}
           <div className="flex flex-col gap-2">
             <div className="flex items-baseline justify-between gap-2">
               {/* radiogroup 은 form control 이 아니라 htmlFor 대신 id + aria-labelledby 로 연결한다.
@@ -647,12 +719,21 @@ export function ProxyBookingDialog({
                 ariaLabelledBy={
                   slotErr ? "proxy-slot-label proxy-slot-error" : "proxy-slot-label"
                 }
+                takenMs={takenMs ?? undefined}
                 onChange={(iso) => {
                   setSelectedIso(iso);
                   setSlotErr(null);
                 }}
               />
             )}
+            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분. */}
+            {slots.length > 0 &&
+              takenMs !== null &&
+              slots.every((s) => takenMs.has(new Date(s.iso).getTime())) && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
+                </p>
+              )}
             {slotErr && (
               <p id="proxy-slot-error" role="alert" className="text-sm text-destructive">
                 {slotErr}

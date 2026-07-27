@@ -3,7 +3,9 @@
 // 환자 예약 생성 (FR-6 P0, Story 2.1). 진료과·담당 의사·30분 슬롯을 직접 골라 POST /appointments.
 // 신원(1.5)에서 patient_id 를 얻고, 슬롯은 30분 격자로 만들어 ISO-8601 UTC 로 보낸다(백엔드 to_slot() 재검증).
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1, AD-10). 저장은 비관적(서버 확정 후 반영).
-// ⚠️ 슬롯 충돌 검사·taken 셀·예약 목록 조회는 이 스토리 범위 밖 — 각각 Epic 5·Epic 4.
+// Story 5.1(FR-15): (의사, 날짜) 선택 시 점유 슬롯을 미리 받아 taken 셀로 그리고, 제출 충돌(409)은
+// red 인라인 + 그 셀 taken 갱신으로 처리한다. 이 페이지는 라우트 상주형이라 시각·가용성이 낡을 수
+// 있다 — 제출 직전 재검증과 서버 게이트(400/409)가 최종 방어다(주기적 폴링은 두지 않는다).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api, type Appointment, type Department, type Doctor } from "@/lib/api";
+import { api, ApiError, type Appointment, type Department, type Doctor } from "@/lib/api";
 import { usePatientIdentity } from "@/lib/patient-identity";
 
 // 병원 시각은 항상 서울 기준이다. 브라우저 로컬 타임존을 쓰면(예: UTC 브라우저) 화면에 보이는
@@ -129,6 +131,15 @@ export default function BookAppointmentPage() {
 
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
 
+  // 점유 슬롯(epoch ms) — null 이면 미조회/조회 실패(taken 없이 렌더). nonce 는 409·성공 후 재조회 트리거.
+  const [takenMs, setTakenMs] = useState<ReadonlySet<number> | null>(null);
+  const [availabilityNonce, setAvailabilityNonce] = useState(0);
+  // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(리뷰 P8).
+  const selectedIsoRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIsoRef.current = selectedIso;
+  }, [selectedIso]);
+
   const [deptErr, setDeptErr] = useState<string | null>(null);
   const [doctorErr, setDoctorErr] = useState<string | null>(null);
   const [slotErr, setSlotErr] = useState<string | null>(null);
@@ -175,6 +186,40 @@ export default function BookAppointmentPage() {
     };
   }, [deptId]);
 
+  // (의사, 날짜)를 고르면 그 날의 점유 슬롯을 미리 받아 taken 셀로 그린다(Story 5.1, UX-DR3).
+  // 조회 실패는 치명 아님 — taken 없이 렌더하고 제출 시 서버 409 가 최종 방어한다(조용한 강등,
+  // 콘솔 0 유지). stale taken 비우기는 진료과·의사·날짜 변경 핸들러가 담당한다(effect 동기 setState 린트 금지).
+  useEffect(() => {
+    if (!doctorId) return;
+    let cancelled = false;
+    const daySlots = slotsForSeoulDay(selectedYmd);
+    const startIso = daySlots[0].iso;
+    // 범위는 [첫 슬롯, 마지막 슬롯 + 30분) — 마지막 슬롯의 점유까지 포함한다.
+    const endIso = new Date(
+      new Date(daySlots[daySlots.length - 1].iso).getTime() + 1_800_000,
+    ).toISOString();
+    api
+      .getAvailability(Number(doctorId), startIso, endIso)
+      .then((av) => {
+        if (cancelled) return;
+        const next = new Set(av.taken.map((t) => new Date(t).getTime()));
+        setTakenMs(next);
+        // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(리뷰 P8).
+        const cur = selectedIsoRef.current;
+        if (cur && next.has(new Date(cur).getTime())) {
+          setSelectedIso(null);
+          setSlotErr("고른 시간이 그새 예약됐어요. 다른 시간을 골라 주세요.");
+        }
+      })
+      .catch(() => {
+        // 조회 실패 시 이전 스냅샷(409로 확인된 마킹 포함)을 보존한다 — null 리셋은 방금 확인한
+        // 충돌 셀까지 되살린다(리뷰 P3). 미조회 상태면 어차피 null(조용한 강등 유지).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [doctorId, selectedYmd, availabilityNonce]);
+
   const deptItems = useMemo(
     () => Object.fromEntries((departments ?? []).map((d) => [String(d.id), d.name])),
     [departments],
@@ -185,11 +230,15 @@ export default function BookAppointmentPage() {
   );
 
   function handleDeptChange(v: string) {
+    // base-ui Select 는 같은 값을 다시 골라도 onValueChange 를 발화한다(6.3 High 재현 클래스) —
+    // 그대로 두면 doctorsLoading 만 켜지고 로더 effect([deptId])가 재실행되지 않아 영구 잠긴다.
+    if (v === deptId) return;
     setDeptId(v);
     // 진료과가 바뀌면 의사·슬롯 선택을 초기화하고 그 과 의사를 새로 로드한다.
     setDoctorId(null);
     setDoctors(null);
     setDoctorsLoading(true);
+    setTakenMs(null); // 이전 의사의 점유 표시가 남지 않게(새 의사 선택 시 재조회).
     setDeptErr(null);
     setDoctorErr(null);
   }
@@ -211,6 +260,13 @@ export default function BookAppointmentPage() {
       ok = false;
     }
     if (!ok || !patient) return;
+    // 6.3 미러(Story 5.1 AC7): 상주 페이지를 오래 열어두면 고른 슬롯이 지나간다 — 제출 직전
+    // 재검증으로 인라인 안내한다(서버 400 이 최종 방어, 여긴 UX 층).
+    if (selectedIso && new Date(selectedIso).getTime() <= new Date().getTime()) {
+      setSlotErr("고른 시간이 이미 지났어요. 다른 시간을 골라 주세요.");
+      setSelectedIso(null);
+      return;
+    }
     // 빠른 더블클릭이 disabled 리렌더 커밋 전에 두 번 들어오면 중복 예약이 생긴다 — ref 로 즉시 차단.
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -226,11 +282,26 @@ export default function BookAppointmentPage() {
       setCreated(appt);
       // 성공 문구는 정직하게 — 생성 직후 status 는 대기라 "확정"이라 하지 않는다(UX-DR10).
       toast.success("예약을 접수했어요. 상태는 '대기'로 시작해요.");
+      // 방금 잡은 슬롯을 즉시 taken 으로 — 성공 경로도 409 경로와 대칭(리뷰 P1: 안 하면 그 셀이
+      // 계속 "예약 가능"으로 남아 재제출 시 자기 예약과 충돌하는 409 를 받는다). 재조회로 서버와 동기화.
+      const bookedMs = new Date(selectedIso as string).getTime();
+      setTakenMs((prev) => new Set([...(prev ?? []), bookedMs]));
+      setAvailabilityNonce((n) => n + 1);
       // 같은 슬롯 중복 제출 방지 — 다시 예약하려면 슬롯을 새로 고르게 한다.
       setSelectedIso(null);
     } catch (err) {
-      // request 가 오류를 한국어 메시지로 던진다(AD-10). 환자 톤이라 안심되게.
-      toast.error(err instanceof Error ? err.message : "예약하지 못했어요. 다시 시도해 주세요.");
+      if (err instanceof ApiError && err.status === 409 && selectedIso) {
+        // 슬롯 충돌(Story 5.1, UX-DR7 도메인 거부) — 서버 detail 그대로 red 인라인 + 그 셀 즉시
+        // taken + 선택 해제, 그리고 재조회로 다른 셀도 서버 진실과 동기화한다(toast 아님 — 폼 보존).
+        setSlotErr(err.message);
+        const failedMs = new Date(selectedIso).getTime();
+        setTakenMs((prev) => new Set([...(prev ?? []), failedMs]));
+        setSelectedIso(null);
+        setAvailabilityNonce((n) => n + 1);
+      } else {
+        // request 가 오류를 한국어 메시지로 던진다(AD-10). 환자 톤이라 안심되게.
+        toast.error(err instanceof Error ? err.message : "예약하지 못했어요. 다시 시도해 주세요.");
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -332,8 +403,12 @@ export default function BookAppointmentPage() {
               items={doctorItems}
               value={doctorId}
               onValueChange={(v) => {
+                if (v === doctorId) return; // 동일값 재발화 가드 — taken 을 불필요하게 지우지 않는다.
                 setDoctorId(v as string);
                 setDoctorErr(null);
+                // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(리뷰 P2 — false-block 방향은
+                // 서버 백스톱이 없다). 새 응답이 오면 effect 가 다시 채운다.
+                setTakenMs(null);
               }}
               disabled={!deptId || doctorsLoading}
             >
@@ -377,8 +452,11 @@ export default function BookAppointmentPage() {
               items={dateItems}
               value={selectedYmd}
               onValueChange={(v) => {
+                // 동일 값 재발화 가드(6.3 Edge #11 클래스) — 같은 날짜 재선택이 고른 시간을 지우면 안 된다.
+                if (v === selectedYmd) return;
                 setSelectedYmd(v as string);
                 setSelectedIso(null);
+                setTakenMs(null); // 이전 날짜의 점유 표시가 새 날짜에 비치지 않게(effect 가 재조회).
                 setSlotErr(null);
               }}
             >
@@ -416,12 +494,21 @@ export default function BookAppointmentPage() {
                 slots={slots}
                 value={selectedIso}
                 ariaLabelledBy="slot-label"
+                takenMs={takenMs ?? undefined}
                 onChange={(iso) => {
                   setSelectedIso(iso);
                   setSlotErr(null);
                 }}
               />
             )}
+            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분. */}
+            {slots.length > 0 &&
+              takenMs !== null &&
+              slots.every((s) => takenMs.has(new Date(s.iso).getTime())) && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
+                </p>
+              )}
             {slotErr && (
               <p role="alert" className="text-sm text-destructive">
                 {slotErr}

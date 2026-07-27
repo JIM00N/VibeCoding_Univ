@@ -88,12 +88,12 @@
 - **진료과 0건 빈 상태 안내 없음** — 진료과 조회가 성공적으로 `[]`를 주면 안내 없이 빈 Select만 뜨고 제출이 영구 차단된다(에러 경로는 `deptLoadError` 표시). 시드에 3과가 있어 데모에선 미발생. 향후 빈 상태 UI 추가. [frontend/app/patient/book/page.tsx]
 - **진료과에 의사 0명 안내 없음** — `getDoctors`가 `[]`면 의사 Select가 활성이지만 옵션·안내가 없다. 시드는 과당 2명이라 데모 미발생. "이 진료과에 담당 의사가 없어요" 안내 추가. [frontend/app/patient/book/page.tsx]
 - **의사 로드 실패가 toast-only** — `getDoctors` 실패 시 `setDoctors([])` + 일시 toast뿐, 진료과처럼 지속 인라인 오류가 없다. 놓치면 빈 드롭다운만 남음. departments처럼 inline error+재시도 추가. [frontend/app/patient/book/page.tsx:157]
-- **자정 넘긴 stale dayOptions** — 7일 날짜 목록이 마운트 1회 계산이라, 페이지를 자정 넘겨 열어두면 첫 옵션이 어제를 가리킨다. 타이머/포커스 재계산 필요. [frontend/app/patient/book/page.tsx:106]
+- **자정 넘긴 stale dayOptions** — 7일 날짜 목록이 마운트 1회 계산이라, 페이지를 자정 넘겨 열어두면 첫 옵션이 어제를 가리킨다. 타이머/포커스 재계산 필요. (2026-07-27 갱신: 5.1이 제출 직전 클라 재검증 + 서버 과거 시각 400 을 넣어 **과거 예약이 실제로 생성되는 위험은 해소** — 남은 것은 표시 신선도뿐이라 심각도 하향.) [frontend/app/patient/book/page.tsx]
 - **`to_slot`(UTC) vs CHECK(세션 tz `extract`) 불일치** — 비-정시 오프셋 세션 tz(+5:45 등)에선 유효 슬롯이 CHECK에 걸려 500. Supabase 기본 UTC라 무해, `slots.py`·AD-3에 문서화됨. 배포 tz 변경 시 재검토. [backend/app/slots.py, db/migrations/003_reserved_at_check.sql]
 
 ## Deferred from: code review of 2-2-직원-예약-확정-취소-상태-흐름 (2026-07-22)
 
-- **`formatReservedAt` 중복(2-소스)** — 2.2가 공유 헬퍼 `frontend/lib/format.ts`를 새로 만들었으나 2.1의 로컬 복사본 `frontend/app/patient/book/page.tsx:61`을 import로 이관하지 않았다. 두 정의는 바이트 동일(같은 옵션·`Asia/Seoul`)이라 출력 정합 문제는 없고, 스펙 Project Structure Notes가 "미러"를 명시 허용한다. 정리하려면 book 화면이 `@/lib/format`을 import하도록 교체하면 되나 2.1 파일을 손대므로 add-only 규율상 보류. 향후 book 화면을 만질 때 함께 이관. [frontend/lib/format.ts:6 ↔ frontend/app/patient/book/page.tsx:61]
+- **`formatReservedAt` 중복(2-소스)** — 2.2가 공유 헬퍼 `frontend/lib/format.ts`를 새로 만들었으나 2.1의 로컬 복사본 `frontend/app/patient/book/page.tsx:61`을 import로 이관하지 않았다. ~~두 정의는 바이트 동일~~(2026-07-27 정정: 정본에만 잘못된 ISO 방어 가드(`"—"` 반환)가 있어 **더 이상 바이트 동일이 아니다** — 사본은 Invalid Date 를 노출할 수 있다. 통합 필요성이 오히려 커짐). 스펙 Project Structure Notes가 "미러"를 명시 허용한다. 정리하려면 book 화면이 `@/lib/format`을 import하도록 교체하면 되나 2.1 파일을 손대므로 add-only 규율상 보류. 향후 book 화면을 만질 때 함께 이관. [frontend/lib/format.ts:6 ↔ frontend/app/patient/book/page.tsx:61]
 
 ## Deferred from: code review of 3-2-진료-기록에-처방-추가 (2026-07-25)
 
@@ -104,3 +104,12 @@
 ## Deferred from: code review of 4-1-환자-자기-예약-진료-기록-조회 (2026-07-26)
 
 - **환자 서브 페이지 신원 신선도(스테일 신원)** — AC5 의 "저장 신원 vs 서버" 대조(`getPatients()` 로 이름·id 불일치 시 clearPatient+리다이렉트)가 `/patient` 홈에만 있다. 재시드/삭제로 id 가 재할당된 뒤 `/patient/appointments`·`/patient/records` 를 **직접 URL·북마크로** 진입하면(홈 우회) 스테일 신원이 안 걸려 남의 진료 데이터가 저장된 이름 아래 렌더될 수 있다. 또한 탭 간 신원 교체(storage 이벤트) 시 리패치 전 1프레임 동안 이전 환자 목록이 새 이름 아래 잠깐 보일 수 있다(`items` 미초기화 + `setLoading` 이 `setTimeout(0)` 지연). AC5 가 "홈 진입 1회"로 의도 스코프했고 AD-8(앱 레벨 필터·보안 아님) 전제라 보류 — 근본 해결은 실인증(AD-7 deferred). 처리 시: 신원 서버 대조를 공용 훅으로 뽑아 환자 3페이지 공통 적용 + `patientId` 변경 시 목록 리셋(렌더 시점 가드). [frontend/app/patient/appointments/page.tsx, frontend/app/patient/records/page.tsx, frontend/app/patient/page.tsx:35-56]
+
+## Deferred from: code review of 5-1-가용성-충돌-검사 (2026-07-27)
+
+- **부분 유니크 인덱스 백스톱(TOCTOU 완화)** — 5.1 게이트는 단일 세션 전제(문서화된 경계)라 동시 요청 이중 예약을 못 막는다. `create unique index ... on appointment(doctor_id, reserved_at) where status in ('대기','확정')` 부분 유니크만으로 **주 경합(예약 vs 예약)은 DB 레벨 차단 가능**(walk-in `medical_record` arm 은 제외 — 완전 차단은 EXCLUDE/점유 테이블 단일화, 아키텍처 Deferred). 5.1 스토리의 "(doctor,slot) 유니크는 합집합이라 불가능" 서술은 과장이었음(리뷰 정정). 적용 시 서비스의 UniqueViolation → 409 매핑 추가 필요. 데모 단일 세션에선 비차단이라 보류. [db/migrations/, backend/app/db/appointments.py]
+
+## Deferred from: 5-1-가용성-충돌-검사 구현 (2026-07-27)
+
+- **`allowedDevOrigins` 의 LAN IP 하드코딩** — 브라우저 실측(Chrome 확장이 `localhost` 탐색을 막아 LAN IP 로 접속)을 위해 `next.config.ts` 에 `allowedDevOrigins: ["192.168.0.13"]` 을 추가했다(Next 16 은 미등록 교차 오리진의 dev 접근을 차단해 하이드레이션이 멈춘다 — 실측 중 실증). dev 전용·프로덕션 빌드 무영향이나 IP 가 DHCP 로 바뀌면 갱신 필요. 다른 환경에서 실측할 일이 생기면 환경셋업.md 에 절차(백엔드 `--host 0.0.0.0` + CORS 오리진 임시 추가 + `NEXT_PUBLIC_API_BASE_URL` 임시 지정 포함)로 승격. [frontend/next.config.ts]
+- **가용성 사전 조회의 폴링 없음(의도)** — 환자 예약 화면은 라우트 상주형이라 taken 표시가 조회 시점 스냅샷이다(다이얼로그는 열 때 remount 라 신선). 주기적 폴링은 YAGNI 로 두지 않았고, 제출 시 서버 게이트(400/409)가 최종 방어 + 409 시 재조회로 동기화한다(스토리 mount lifetime 설계 결정). 실시간성 요구가 생기면 폴링/refetch-on-focus 검토. [frontend/app/patient/book/page.tsx]

@@ -6,6 +6,7 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
+from app.db.availability import SlotTakenError, slot_taken_sql
 from app.db.pool import get_pool
 
 # 의사의 소속 진료과(hospital_department_id)를 조회한다 — 서비스가 "선택 의사가 선택 진료과 소속인지"
@@ -16,26 +17,39 @@ _SELECT_DOCTOR_HD = """
     where id = %s
 """
 
-# 예약 1건 삽입 후, 표시 필드(patient_name·doctor_name·department_name)를 조인해 한 왕복으로 돌려준다.
-# - id 는 GENERATED ALWAYS AS IDENTITY 라 넣지 않는다(평범한 INSERT 가 다음 시퀀스 값 생성).
-# - status 는 명시적 '대기'(AC1·DB 기본값과 일치, 자기문서화). reserved_at 은 서비스가 to_slot() 로 floor 한 값.
-# - doctor 는 LEFT JOIN(doctor_id 스키마 nullable 정직; P0는 항상 채워짐).
-# ⚠️ 슬롯 충돌 검사(check_and_occupy)는 Epic 5. P0는 검사 없이 삽입한다.
-_INSERT_APPOINTMENT = """
-    with inserted as (
+# 예약 1건을 충돌 게이트와 함께 삽입하고(Story 5.1, FR-15·AD-4), 표시 필드까지 한 왕복으로 돌려준다.
+# - taken CTE 가 (의사, 슬롯) 점유를 판정하고, INSERT 는 `where not slot_taken` 으로 게이트된다 —
+#   검사+삽입이 같은 SQL 문이라 한 문장 안에서는 검사↔삽입 사이에 끼어들 틈이 없다(단일 CTE 관용구).
+#   ⚠️ 이는 **단일 세션 전제**의 보장이다 — 동시에 실행되는 다른 문장의 미커밋 삽입은 스냅샷에 안
+#   보이므로 동시 요청 경쟁(TOCTOU)은 막지 못한다(명시적 범위 밖 — 아키텍처 Deferred, AD-4 강제 경계).
+#   충돌 조각·floor 식은 db/availability.py 한 벌뿐(AD-3). 슬롯 = %(reserved_at)s (서비스가
+#   to_slot() 로 floor 한 값이지만, 비교 양변에 floor 식을 재적용해 저장 형태에 의존하지 않는다).
+# - id 는 GENERATED ALWAYS AS IDENTITY 라 넣지 않는다. status 는 명시적 '대기'(자기문서화).
+# - 최종 SELECT 는 taken 기준 LEFT JOIN — 충돌 시 inserted 가 0행이어도 slot_taken 플래그 1행을
+#   돌려준다(함수가 SlotTakenError 로 변환). 성공 시 FK 가 유효해 표시 조인은 항상 채워진다.
+# - named 파라미터(%(name)s) — 게이트 조각이 named 라 문 전체를 통일(혼용 금지).
+_INSERT_APPOINTMENT = f"""
+    with taken as (
+        select {slot_taken_sql("%(reserved_at)s")} as slot_taken
+    ),
+    inserted as (
         insert into public.appointment (patient_id, hospital_department_id, doctor_id, reserved_at, status)
-        values (%s, %s, %s, %s, '대기')
+        select %(patient_id)s, %(hospital_department_id)s, %(doctor_id)s, %(reserved_at)s, '대기'
+        from taken
+        where not slot_taken
         returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
     )
-    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+    select t.slot_taken,
+           i.id, i.patient_id, i.hospital_department_id, i.doctor_id, i.reserved_at, i.status,
            p.name   as patient_name,
            doc.name as doctor_name,
            d.name   as department_name
-    from inserted a
-    join public.patient p               on p.id  = a.patient_id
-    join public.hospital_department hd  on hd.id = a.hospital_department_id
-    join public.department d            on d.id  = hd.department_id
-    left join public.doctor doc         on doc.id = a.doctor_id
+    from taken t
+    left join inserted i                    on true
+    left join public.patient p              on p.id  = i.patient_id
+    left join public.hospital_department hd on hd.id = i.hospital_department_id
+    left join public.department d           on d.id  = hd.department_id
+    left join public.doctor doc             on doc.id = i.doctor_id
 """
 
 
@@ -110,7 +124,7 @@ _SELECT_APPOINTMENT_BY_ID = """
 # 전이 적격성(대기→확정 등)은 서비스가 먼저 검증(AD-5). 추가로 UPDATE 자체가 `status = any(%s)`
 # (허용 출발 status)를 조건으로 걸어 compare-and-set 한다 — 서비스 검증과 UPDATE 사이에 다른 요청이
 # status 를 바꾸는 경합에서도 금지 전이(예: 취소→확정)가 성립하지 않는다. 조건 불일치는 0행 → None.
-# ⚠️ 슬롯 점유/해제(check_and_occupy)는 Epic 5. 취소는 status 만 바꾼다(충돌 쿼리가 취소를 제외).
+# 슬롯 점유/해제 로직 불필요 — 취소는 status 만 바꾸면 충돌 쿼리(db/availability.py)가 취소를 제외한다.
 _UPDATE_APPOINTMENT_STATUS = """
     with updated as (
         update public.appointment
@@ -131,30 +145,64 @@ _UPDATE_APPOINTMENT_STATUS = """
 """
 
 
-# 담당 의사 변경(Story 2.3, FR-7 P0) — doctor_id 만 UPDATE 하고 표시 필드를 조인해 한 왕복으로
-# 정규 모델 행을 돌려준다. _UPDATE_APPOINTMENT_STATUS 와 같은 compare-and-set 모양:
-# `status = any(%s)`(대기·확정)를 조건으로 걸어, 서비스 검증과 UPDATE 사이에 status 가 완료/취소로
-# 바뀌는 경합에서도 부적격 예약의 재배정이 성립하지 않는다. 조건 불일치는 0행 → None(서비스가 409).
+# 담당 의사 변경(Story 2.3, FR-7 P0 + Story 5.1 재검사) — doctor_id 만 UPDATE 하고 표시 필드를
+# 조인해 한 왕복으로 돌려준다. 두 겹의 원자 가드가 한 문장 안에 있다:
+# ① compare-and-set: `status = any(%(allowed_sources)s)`(대기·확정) — 검증과 UPDATE 사이 status
+#    경합에서도 부적격 재배정이 성립하지 않는다. 불일치 0행 → id null 행 → None(서비스가 CAS 409).
+# ② 가용성 재검사(FR-7 P1·AD-4): 새 의사(%(doctor_id)s)의 (의사, 슬롯) 점유를 taken CTE 가
+#    판정하고 `not slot_taken` 으로 게이트한다. 슬롯은 대상 행의 reserved_at 에서 SQL 이 직접
+#    유도(target CTE — prefetch 값 의존 제거), 자기 행은 %(exclude_appointment_id)s 로 제외한다.
+#    이전 슬롯 해제 + 새 슬롯 점유는 doctor_id 단일 UPDATE 로 원자 성립(점유가 행에서 유도되므로).
 # status·reserved_at·hospital_department_id 는 건드리지 않는다(AD-5, 과 이동 없음).
-# ⚠️ (의사, 슬롯) 가용성 재검사·exclude_appointment_id 는 Epic 5. P0는 doctor_id 갱신만.
-_UPDATE_APPOINTMENT_DOCTOR = """
-    with updated as (
+_UPDATE_APPOINTMENT_DOCTOR = f"""
+    with target as (
+        select reserved_at,
+               status = any(%(allowed_sources)s) as cas_ok
+        from public.appointment
+        where id = %(appointment_id)s
+    ),
+    taken as (
+        select {slot_taken_sql("(select reserved_at from target)")} as slot_taken
+    ),
+    updated as (
         update public.appointment
-        set doctor_id = %s
-        where id = %s
-          and status = any(%s)
+        set doctor_id = %(doctor_id)s
+        where id = %(appointment_id)s
+          and status = any(%(allowed_sources)s)
+          and not (select slot_taken from taken)
         returning id, patient_id, hospital_department_id, doctor_id, reserved_at, status
     )
-    select a.id, a.patient_id, a.hospital_department_id, a.doctor_id, a.reserved_at, a.status,
+    select t.slot_taken,
+           (select cas_ok from target) as cas_ok,
+           u.id, u.patient_id, u.hospital_department_id, u.doctor_id, u.reserved_at, u.status,
            p.name   as patient_name,
            doc.name as doctor_name,
            d.name   as department_name
-    from updated a
-    join public.patient p               on p.id  = a.patient_id
-    join public.hospital_department hd  on hd.id = a.hospital_department_id
-    join public.department d            on d.id  = hd.department_id
-    left join public.doctor doc         on doc.id = a.doctor_id
+    from taken t
+    left join updated u                     on true
+    left join public.patient p              on p.id  = u.patient_id
+    left join public.hospital_department hd on hd.id = u.hospital_department_id
+    left join public.department d           on d.id  = hd.department_id
+    left join public.doctor doc             on doc.id = u.doctor_id
 """
+
+
+def _interpret_doctor_update_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """의사 변경 게이트 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상).
+
+    CAS 불일치(cas_ok=false)가 슬롯 충돌보다 **우선**한다(코드리뷰) — 이중 경합에서 슬롯 409 의
+    "다른 의사를 선택해 주세요"는 따라도 성공할 수 없는 오도 안내가 되기 때문. 진짜 사유(status
+    변경)는 None → CAS 409 경로가 안내한다. 행 자체가 없으면(없는 id) 역시 None.
+    """
+    if row is None:
+        return None  # fetchone 계약상 가능성 정직 반영(taken CTE 가 항상 1행이라 도달 불가).
+    slot_taken = row.pop("slot_taken")
+    cas_ok = row.pop("cas_ok")
+    if row["id"] is None:
+        if slot_taken and cas_ok:
+            raise SlotTakenError()
+        return None  # CAS 불일치·없는 id — 기존 None 계약 유지(서비스가 409/404 소유).
+    return row
 
 
 def fetch_doctor_department(doctor_id: int) -> int | None:
@@ -172,18 +220,38 @@ def insert_appointment(
     doctor_id: int | None,
     reserved_at: datetime,
 ) -> dict[str, Any] | None:
-    """예약 1건을 삽입하고 표시 필드까지 조인한 행(dict)을 반환한다. 파라미터화 SQL(injection 방지).
+    """예약 1건을 충돌 게이트와 함께 삽입하고 표시 필드까지 조인한 행(dict)을 반환한다.
 
-    FK 가 유효하면 조인 결과가 항상 1행이라 dict 를 돌려주지만, fetchone() 계약상 None 가능성을
-    정직하게 반영한다(호출 서비스가 None 을 방어). FK 위반은 여기서 psycopg 예외로 올라간다.
+    (의사, 슬롯) 이 이미 점유돼 게이트가 삽입을 거부하면 SlotTakenError 를 올린다(서비스가
+    409 로 매핑). 반환 계약은 기존 그대로 "행 dict | None" — slot_taken 플래그는 여기서
+    해석·제거한다. FK 위반은 psycopg 예외로 올라간다. 파라미터화 SQL(injection 방지).
     """
+    if doctor_id is None:
+        # 게이트 조각의 `a.doctor_id = NULL` 비교는 항상 no-match 라 충돌 검사가 통째로 무력화된다.
+        # P0 서비스가 400으로 먼저 막지만, 5.2(자동 배정) 등 후속 직접 호출자를 위해 db 계층에서도
+        # 명시 거부한다(코드리뷰 — 커넥션을 열기 전에 실패해 테스트도 DB 없이 가능).
+        raise ValueError("insert_appointment: doctor_id 없이는 충돌 게이트가 성립하지 않아요.")
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 _INSERT_APPOINTMENT,
-                (patient_id, hospital_department_id, doctor_id, reserved_at),
+                {
+                    "patient_id": patient_id,
+                    "hospital_department_id": hospital_department_id,
+                    "doctor_id": doctor_id,
+                    "reserved_at": reserved_at,
+                    # 생성은 자기 행이 없다 — 조각을 한 벌로 유지하기 위한 nullable 파라미터.
+                    "exclude_appointment_id": None,
+                },
             )
-            return cur.fetchone()
+            row = cur.fetchone()
+    if row is None:
+        return None  # fetchone 계약상 가능성 정직 반영(도달 불가) — 서비스 500 방어 유지.
+    if row.pop("slot_taken"):
+        raise SlotTakenError()
+    if row["id"] is None:
+        return None  # 게이트 통과 후 삽입 0행 — 도달 불가, 방어적 가드.
+    return row
 
 
 def fetch_appointments() -> list[dict[str, Any]]:
@@ -248,17 +316,24 @@ def update_appointment_status(
 def update_appointment_doctor(
     appointment_id: int, doctor_id: int, allowed_sources: tuple[str, ...]
 ) -> dict[str, Any] | None:
-    """예약의 담당 의사를 조건부(compare-and-set)로 갱신하고 표시 필드까지 조인한 행을 반환한다.
+    """예약의 담당 의사를 CAS + 가용성 재검사(Story 5.1)로 갱신하고 표시 필드까지 조인해 반환한다.
 
-    현재 status 가 allowed_sources(대기·확정) 안에 있을 때만 UPDATE 한다 — 서비스가 먼저 적격성을
-    검증하지만, 검증과 UPDATE 사이에 status 가 바뀌는 경합에서도 이 원자적 가드가 부적격 재배정을
-    막는다. 조건 불일치(경합)·없는 id 는 0행 → None(서비스가 409 로 매핑).
-    파라미터화 SQL(injection 방지) — placeholder 순서는 SQL 대로 (doctor_id, appointment_id, sources).
+    새 의사가 그 슬롯에 이미 점유돼 있으면(자기 행 제외) SlotTakenError 를 올린다(서비스가
+    409 슬롯 문구로 매핑). status 경합(CAS 불일치)·없는 id 는 기존 계약 그대로 None(서비스가
+    CAS 409 로 매핑) — 두 409 는 문구로 구분된다. 시그니처·반환 계약은 2.3 그대로(슬롯은
+    SQL 이 대상 행에서 직접 유도, 자기 행 제외도 appointment_id 를 재사용).
+    파라미터화 SQL(injection 방지).
     """
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 _UPDATE_APPOINTMENT_DOCTOR,
-                (doctor_id, appointment_id, list(allowed_sources)),
+                {
+                    "appointment_id": appointment_id,
+                    "doctor_id": doctor_id,
+                    "allowed_sources": list(allowed_sources),
+                    "exclude_appointment_id": appointment_id,
+                },
             )
-            return cur.fetchone()
+            row = cur.fetchone()
+    return _interpret_doctor_update_row(row)

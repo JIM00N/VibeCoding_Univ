@@ -42,7 +42,7 @@ class AppointmentDoctorUpdate(BaseModel):
     의사 변경을 섞지 않는다. doctor_id 는 int 필수 — 누락은 422(2.2 의 status 누락과 동일 계약),
     값 검증(의사 존재·같은 진료과·다른 의사)은 서비스가 400 한국어 문자열로 막는다(AD-10).
     extra="forbid" — status 등 다른 필드를 동봉하면 조용히 무시하지 않고 422(분리 고정).
-    ⚠️ (의사, 슬롯) 가용성 재검사는 Epic 5(FR-15) — P0는 doctor_id 갱신만 한다.
+    (의사, 슬롯) 가용성 재검사는 서비스·db 게이트가 수행한다(Story 5.1, FR-15 — 충돌 409).
     """
 
     model_config = ConfigDict(extra="forbid")
