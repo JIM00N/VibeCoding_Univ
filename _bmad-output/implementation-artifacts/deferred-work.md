@@ -5,6 +5,13 @@
 > fetch-or-404 4사본 · CAS 409 문구 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 ·
 > 의사↔진료과 검증 블록 2-소스. 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
 
+## Deferred from: 5-3-대리예약-walk-in-흡수 구현 (2026-07-28)
+
+> 아래 2건은 리뷰가 발견할 항목을 **스토리 작성 시점에 미리 판정한** 것이다(계산된 비용이지 놓친 결함이 아니다).
+
+- **가용성 조회 로직 3사본** — `[start, end)` 범위 계산(`daySlots[0].iso` ~ `+1_800_000`)은 `patient/book` ↔ `proxy-booking-dialog` 에 **5.1 때부터 이미 2사본**이었고, 5.3이 자동 배정 교집합 분기(`toMsSet` + `Promise.all` + 교집합)까지 두 곳에 나란히 두면서 사본 폭이 넓어졌다. 추출안은 `lib/availability-slots.ts` 신설(범위 계산 + 단일/교집합 조회를 한 모듈로) + 두 화면 import — **기존 2사본까지 함께 없앨 수 있어 순 LOC 는 오히려 줄지만**, done 스토리(`patient/book`) 리팩토링 + 신규 파일이라 5.3의 승인 범위("프런트 1파일·신규 파일 0")를 넘는다. 다음 정리 스토리가 3사본을 한 번에 수렴. [frontend/app/patient/book/page.tsx (가용성 effect) ↔ frontend/components/proxy-booking-dialog.tsx (가용성 effect)]
+- **`AUTO_DOCTOR` 상수 2사본** — `"auto"` 센티넬이 두 화면에 각각 있다. **무해한 사본**이다: 각 화면이 자기 상수를 자기 `doctorId` 상태와만 비교하므로 공유 동작이 없고, 값이 드리프트해도 어느 쪽도 깨지지 않는다(5.4가 수렴한 것은 *로직* 사본). 1줄 상수를 위해 순수 시각 모듈(`lib/booking-slots.ts`)에 의사 Select 센티넬을 넣거나 done 스토리를 건드리는 비용이 이득보다 크다고 판단. 위 항목(가용성 추출)을 처리할 때 자연히 함께 수렴된다. [frontend/app/patient/book/page.tsx:37 ↔ frontend/components/proxy-booking-dialog.tsx]
+
 ## Deferred from: code review of 5-2-의사-자동-배정 (2026-07-27)
 
 - **환자 단위 중복 예약 가드 부재** — 같은 환자가 같은 시각에 복수 의사에게 예약을 만들 수 있다(appointment 에 환자·시각 유니크 없음, 서비스 검사도 (의사, 슬롯) 점유뿐). 직접 선택 모드에서도 의사만 바꿔 고르면 원래 가능했던 앱 전반 기존 부재 — 5.2 자동 모드는 성공 직후 그 셀이 (교집합 의미론상 참으로) 다시 열리므로 우발 도달성을 높였을 뿐이다. 처리 시 서비스에 환자 단위 충돌 검사(400 한국어) 또는 제출 전 안내. 데모 하드닝류. [backend/app/services/appointments.py, frontend/app/patient/book/page.tsx]
