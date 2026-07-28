@@ -79,6 +79,7 @@ flowchart TB
   - **예약 생성(P0):** 의사 **직접 선택 필수** → `appointment.doctor_id`는 항상 채워짐(DB는 nullable이나 앱이 P0에서 강제; nullable은 스키마 안정성·P1 자동배정용).
   - **의사 변경(FR-7):** 새 `(doctor_id, slot)` 점유 확인 시 **자기 행 제외**(`exclude_appointment_id`)하고, 같은 트랜잭션에서 이전 슬롯 해제 + 새 슬롯 점유. *(P1의 전체 재검사 플로우는 Deferred.)*
   - **강제 경계(정직):** 단일 세션에서 차단을 보장하며 동시 요청 경쟁(TOCTOU)은 범위 밖.
+  - **환자 축 보강(2026-07-28 chore, FR-15b):** 위 판정 단위는 `(doctor_id, slot)`이라 **환자 축을 보지 않는다** — 한 환자가 같은 슬롯에 다른 의사로 두 번 예약하는 것을 이 게이트는 막지 못한다(라이브 실측 후 확인). 이 축은 게이트 조각을 늘리지 않고 **DB 부분 유니크 인덱스** `uq_appointment_patient_slot`(`db/migrations/006`, `(patient_id, reserved_at) where status in ('대기','확정')`)이 담당한다. 이유: 코드가 더 적고, 게이트가 포기한 TOCTOU까지 이 축에서는 닫힌다. `reserved_at`은 AD-9의 30분 CHECK가 있어 raw 컬럼이 곧 슬롯이라 floor 식이 불필요하다. **이 축을 앱 게이트로 옮기지 말 것** — 인덱스를 지우면 동시 요청 차단이 함께 사라진다. 경계: walk-in `medical_record`(`appointment_id` null) arm은 단일 테이블 제약이라 인덱스 범위 밖(현재 0건, 전용 경로 철회).
 
 ### AD-5 — `appointment.status` 전이는 예약 서비스만 소유, 완료는 기록 생성의 부작용
 - **Binds:** FR-8, FR-9

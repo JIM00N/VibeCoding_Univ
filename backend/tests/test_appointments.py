@@ -1176,3 +1176,70 @@ def test_create_appointment_auto_unknown_patient_fk_maps_to_400(monkeypatch):
 
     assert resp.status_code == 400
     assert resp.json()["detail"] == "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."
+
+
+# --- chore(2026-07-28): 환자 1인 동시 예약 금지 (부분 유니크 인덱스 → 409) -----------
+# 실 보증은 db/migrations/006 의 인덱스 + curl 실증이 담당한다 — 아래 두 테스트는 db 를
+# monkeypatch 하므로 "UniqueViolation 이 올라오면 409 한국어로 매핑되는가"만 고정한다
+# (계약 테스트의 한계는 .claude/rules/backend.md 참조).
+
+
+def test_create_appointment_patient_slot_conflict_returns_409(monkeypatch):
+    # 같은 환자가 같은 슬롯에 다른 의사로 재예약 → 006 인덱스가 UniqueViolation.
+    # 전역 500 이 아니라 409 한국어여야 하고, 기존 세 409 와 문구로 구분돼야 한다.
+    from psycopg.errors import UniqueViolation
+
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+
+    def dup_insert(*args, **kwargs):
+        raise UniqueViolation(
+            'duplicate key value violates unique constraint "uq_appointment_patient_slot"'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment", dup_insert)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 4,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail == "같은 시간에 다른 예약이 이미 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
+
+
+def test_create_appointment_auto_patient_slot_conflict_returns_409(monkeypatch):
+    # 자동 배정도 같은 매핑이어야 한다 — pick 은 "그 의사가 빈가"만 보므로 환자 중복은
+    # 인덱스가 잡는다(직접 선택 경로 테스트의 자동판, FK 매핑 쌍과 같은 구조).
+    from psycopg.errors import UniqueViolation
+
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}, {"id": 4}])
+
+    def dup_auto(*args, **kwargs):
+        raise UniqueViolation(
+            'duplicate key value violates unique constraint "uq_appointment_patient_slot"'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", dup_auto)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "같은 시간에 다른 예약이 이미 있어요. 다른 시간을 골라 주세요."
