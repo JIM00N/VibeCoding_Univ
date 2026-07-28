@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-28 # chore/patient-slot-guard(PR #28) 코드리뷰 완료 → review. Epic 5 회고 액션 #1(미지시 버그 트리아지) done, #5 절반 이행. 미머지 상태 — 배포·라이브 확인 남음
+last_updated: 2026-07-28 # chore/patient-slot-guard(PR #28) 머지·배포·라이브 확인 → done. Epic 5 회고 액션 #1(미지시 버그 트리아지) done, #5 절반 이행. 열린 액션 4건
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -98,7 +98,7 @@ development_status:
 
   # 에픽 밖 작업 (계획 범위 종료 후 — Epic 5 회고 액션 #1 트리아지 산물)
   # 스토리 파일 없음(chore) — AC 대신 FR-1b·FR-15b 와 코드리뷰 findings 가 기준 역할을 했다.
-  chore-patient-slot-guard: review # 2026-07-28 PR #28 OPEN(미머지). ① 첫화면 [의사]→/doctor/select(FR-1b) ② 환자 1인 동시 예약 금지(FR-15b 신설 — db/migrations/006 부분 유니크 + /availability 환자 축 사전 표시). 3층 코드리뷰 완료: High 3·patch 11 반영, Defer 2, Dismiss 3. pytest 131·curl 10/10·브라우저 실측 완료. ⚠️ done 아님 — 머지·배포·라이브 확인 3게이트 미충족. ⚠️ 006 인덱스는 이미 라이브 적용됨(코드 머지 전 적용 규칙) → 배포 전까지 환자 중복 시도는 409 가 아니라 500
+  chore-patient-slot-guard: done # 2026-07-28 PR #28 머지(13d440d)·Railway/Vercel 배포·라이브 실측 완료. ① 첫화면 [의사]→/doctor/select(FR-1b) ② 환자 1인 동시 예약 금지(FR-15b 신설 — db/migrations/006 부분 유니크 + /availability 환자 축 사전 표시). 3층 코드리뷰: High 3·patch 11 반영, Defer 2, Dismiss 3. pytest 131·ruff 0·lint 0·build 통과. 라이브 실측: 환자 중복 3경로 409("이 환자는 …")·의사 충돌 문구 회귀 없음·patient_taken 이 의사 한가한 슬롯을 막음·프로덕션 번들에서 10시 disabled + [가장 빠른 시간]→09:00·의사 진입 /doctor/select 유지(6명 선택 가능)·콘솔 0. 검증 예약 전량 원복. ⚠️ 추적 커밋 b10fdcc 가 PR 머지 시점보다 늦어 main 에 안 들어가 cherry-pick(d16acfb)으로 복구함
 
 # Retrospective action items (Epic 1 회고 2026-07-19 · Epic 2 회고 2026-07-23)
 action_items:
