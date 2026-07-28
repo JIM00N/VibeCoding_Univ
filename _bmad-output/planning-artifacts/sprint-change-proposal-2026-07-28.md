@@ -77,7 +77,9 @@ FR-16(walk-in 즉시 진료)은 **예약 없이** `medical_record`를 만드는 
 | 스토리 파일 | `5-3-대리예약-walk-in-흡수.md` 신규 |
 | `prd.md` FR-16·FR-18 | 범위 축소 주석 + 철회 항목·정직한 한계 명시(원문은 취소선으로 보존). 2026-07-25 correct-course 가 FR-18 을 PRD 에 직접 반영한 선례를 따른다 |
 | `ARCHITECTURE-SPINE.md` | Capability Map 의 FR-16 행 갱신 + Deferred 앞 correct-course 주석. **AD-4·AD-6 조항 본문은 무수정** — 충돌 합집합의 walk-in arm·`appointment_id` nullable·부분 유니크는 전부 보존(설계 여유). AD-6의 "walk-in → 배정 의사 소속" 분기만 현재 도달 코드 없음을 명시 |
-| `EXPERIENCE.md` | IA 표(전용 화면 → 대리 예약 경유)·Flow 3 개정·State Patterns(전원 점유 = red 인라인) |
+| `EXPERIENCE.md` | IA 표(전용 화면 → 대리 예약 경유, 직원 홈 행의 walk-in 바로가기 제거)·Flow 3 개정·State Patterns(전원 점유 = red 인라인)·Voice/Tone 표의 거부 문구 정본을 실제 배포 문구로 교체 |
+| `DESIGN.md` | destructive red 사용처 서술을 "전원 점유로 인한 walk-in 접수 거부(red 인라인)"로 정정 *(코드리뷰가 §4 누락으로 지적 — 색 의미론은 살아남아 모순은 아니고 문구 드리프트였다)* |
+| `.claude/rules/backend.md` | SQL 조각 빌더 절의 "Story 5.3 워크인이 네 번째 호출자를 추가할 예정" 예고 철회 *(코드리뷰 지적 — 이 파일은 `paths: backend/**` 로 **자동 로드되는 살아있는 규칙**이라 날짜 박힌 기록물과 달리 반드시 갱신해야 한다. 최초 sweep 이 `_bmad-output/` 만 훑어 빠뜨렸다)* |
 | `implementation-readiness-report-2026-07-13.md`, `sprint-change-proposal-2026-07-25.md` | **수정하지 않는다** — 날짜가 박힌 시점 기록물 |
 
 **되돌릴 완료 작업 없음.** Epic 5의 5.1·5.2·5.4는 전부 그대로 유효하다.

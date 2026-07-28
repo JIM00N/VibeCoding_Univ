@@ -22,7 +22,7 @@ colors:
   status-done-bg: '#DCFCE7'
   status-cancelled-fg: '#475569' # 취소 (gray)
   status-cancelled-bg: '#F1F5F9'
-  # 위험(슬롯 충돌 · walk-in 빈 의사 없음)은 shadcn destructive(red) 그대로 사용.
+  # 위험(슬롯 충돌 · 전원 점유로 인한 walk-in 접수 거부)은 shadcn destructive(red) 그대로 사용.
 typography:
   # 한글 본문 가독을 위해 sans 패밀리를 Pretendard로 override(shadcn 기본 Geist는 라틴용).
   sans:
@@ -70,7 +70,7 @@ shadcn/ui 기본을 통째로 상속한다. 이 문서는 **브랜드 델타만*
   - 🔵 **확정** — blue (`#1E40AF` / bg `#DBEAFE`)
   - 🟢 **완료** — green (`#166534` / bg `#DCFCE7`)
   - ⚪ **취소** — gray (`#475569` / bg `#F1F5F9`)
-- **Destructive (red)** — shadcn 기본 그대로. **오직** 도메인 거부(슬롯 충돌, walk-in 빈 의사 없음)와 파괴적 확정(예약 취소)에만.
+- **Destructive (red)** — shadcn 기본 그대로. **오직** 도메인 거부(슬롯 충돌, 전원 점유로 인한 walk-in 접수 거부 — 2026-07-28 correct-course 이후 둘 다 red **인라인**으로 수렴, Dialog 아님)와 파괴적 확정(예약 취소)에만.
 - **그 외 토큰**(`background`, `foreground`, `muted`, `border`, `input`, `ring`, `card`, `popover`)은 shadcn 상속. 브랜드가 override를 정당화 못 하면 override 안 한다.
 
 피할 것: 두 개 넘는 브랜드 색, 그라디언트 표면, 상태색을 크롬에 재사용(상태 4색은 상태에만), 색만으로 상태 구분.

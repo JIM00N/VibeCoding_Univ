@@ -5,6 +5,12 @@
 > fetch-or-404 4사본 · CAS 409 문구 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 ·
 > 의사↔진료과 검증 블록 2-소스. 내역은 스토리 파일(5-4-중복-사본-정리.md)과 해당 커밋이 정본.
 
+## Deferred from: code review of 5-3-대리예약-walk-in-흡수 (2026-07-28)
+
+- **`selectedIsoRef` 미러 지연 — `setSelectedIso` 의 모든 writer 에 해당** — ref 는 패시브 effect(`:118-120`)로 한 박자 늦게 따라오는데, 가용성 응답이 렌더 커밋↔effect 플러시 사이에 도착하면 `:266` 의 `cur` 가 stale 이라 "고른 시간이 그새 예약됐어요" 해제가 안 걸린다. 5.3 의 `selectEarliestFreeSlot`(`:389`)만의 문제가 아니라 **기존 슬롯 클릭 경로(`:817`)도 완전히 동일**해, 한쪽만 고치면 비대칭이 된다. 근본 해결은 두 writer 를 `selectSlot(iso)` 같은 헬퍼로 모아 state 와 ref 를 함께 쓰는 것인데 그건 동결된 SlotPicker onChange 를 건드린다. 창이 극히 좁고(마이크로태스크 경합) 서버 409 가 자기교정한다. [frontend/components/proxy-booking-dialog.tsx:389 ↔ :817]
+- **400(과거 슬롯) 응답에 인라인 경로가 없다** — 제출 catch 가 `409` 로만 분기해 나머지(과거 슬롯 400 포함)는 toast 로 흐르고 `slotErr`·선택 해제·`revealField` 가 없다. 같은 슬롯이 선택된 채 남아 다시 누르면 동일한 400 이 반복된다. 409 전용 분기는 5.1·6.3 이 세운 것이고 5.3 이 만들지 않았다. 처리 시 400 도 409 와 같은 인라인 경로로 흡수. [frontend/components/proxy-booking-dialog.tsx:452]
+- **`doctorLoadError` 가 `aria-describedby` 체인에 연결되지 않는다** — 의사 목록 로드 실패 문단(`:722-726`)에 id 가 없어 체인이 `undefined` 로 떨어진다. 나타날 때 `role="alert"` 로 한 번 읽히지만, 여전히 활성인 트리거를 다시 포커스하면 "왜 자동 배정만 있는지" 사유가 안 읽힌다. 5.3 이전 체인도 `doctorErr`/`doctorsEmpty` 뿐이라 로드 실패는 원래 연결된 적이 없다(회귀 아님). [frontend/components/proxy-booking-dialog.tsx:722]
+
 ## Deferred from: 5-3-대리예약-walk-in-흡수 구현 (2026-07-28)
 
 > 아래 2건은 리뷰가 발견할 항목을 **스토리 작성 시점에 미리 판정한** 것이다(계산된 비용이지 놓친 결함이 아니다).

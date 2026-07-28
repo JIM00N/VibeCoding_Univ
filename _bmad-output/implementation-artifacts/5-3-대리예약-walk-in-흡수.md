@@ -107,6 +107,39 @@ so that walk-in 환자도 기존 환자와 같은 흐름(등록 → 예약 → �
   - [ ] Vercel 자동 배포(Railway 도 push 로 재배포되지만 백엔드 코드가 동일해 동작 변화 0 — 성공 여부만 확인) → **라이브 실측**(신규 번들 "자동 배정" 옵션·[가장 빠른 시간]·교집합 taken·409 문구, 콘솔 신규 에러 0) → 검증 데이터 SQL 원복 → 스토리 Status·sprint-status `5-3` → done, main 에 done 커밋·push → 서버 종료.
   - [ ] **Epic 5 종료** — 5.1·5.2·5.3·5.4 전부 done 이면 `epic-5: done` + `/bmad-retrospective`(액션 항목을 sprint-status 에 반영).
 
+### Review Findings (2026-07-28)
+
+4층 병렬 리뷰: **Codex 사전 리뷰**(1건) + **Blind Hunter**(10건) + **Edge Case Hunter**(8건) + **Acceptance Auditor**(7건 — 하드 게이트는 전부 독립 재실행으로 PASS 확인). 병합·중복 제거 후 유니크 18건 → 코드 도달성을 직접 읽어 심각도 재산정 → **Patch 13 · Defer 3 · Dismiss 2**.
+
+Acceptance Auditor 가 재실행으로 확인한 PASS: 백엔드 diff 0 · 동결 5파일 0줄 · 코드 파일 정확히 1개 · `useState` 26→26(신규 상태 0) · pytest 126 · ruff · lint/build 15라우트 · 안티패턴 5종 전부 미위반 · 경계 2건(다음 빈 슬롯·walk-in arm 보존) 정직함 확인.
+
+**[Review][Patch] — 13건**
+
+- [x] [Review][Patch] **[Med] `slotErr` 가 의사·진료과 변경에도 살아남아 그리드와 모순** (blind) — 날짜 변경 핸들러는 `setSlotErr(null)` 을 하는데 의사 변경(`:670-677`)·진료과 변경(`:342-356`)은 안 한다. 만석 의사에서 [가장 빠른 시간] → red "이 날짜는 예약이 모두 찼어요" → 널널한 의사로 전환하면 그리드는 전부 열리는데 red 는 그대로. 게다가 `:812-814` 가 그 오류 id 를 radiogroup `aria-labelledby` 에 이어 붙여 SR 이 빈 그리드 위에서 계속 읽는다. 성질은 5.3 이전부터 있었으나 새 버튼이 **한 번의 클릭으로 도달**하게 만들었다. [frontend/components/proxy-booking-dialog.tsx:670]
+- [x] [Review][Patch] **[Med] [가장 빠른 시간]이 의사 선택 전에도 눌려 가용성 무지 상태로 슬롯을 고르고, 이후 거짓 사유를 표시** (blind) — 버튼이 `slots.length > 0` 로만 게이트돼 있다. 환자만 고른 뒤 클릭 → `takenMs === null` 이라 09:00 이 잡힘 → 그 뒤 진료과·자동 배정 선택 → 조회 결과 09:00 이 교집합에 있으면 선택이 해제되며 "고른 시간이 그새 예약됐어요"가 뜬다. **거짓이다** — 방금 찬 게 아니라 처음부터 차 있었고 앱이 안 봤을 뿐. [frontend/components/proxy-booking-dialog.tsx:789]
+- [x] [Review][Patch] **[Med] [가장 빠른 시간]이 제출 중에도 활성 — mid-flight 클릭이 409 핸들러의 stale 클로저에 삼켜짐** (edge+blind 교차) — 닫기·예약 만들기만 `disabled={submitting}` 이다. 제출 중 클릭하면 `selectedIso` 가 바뀌는데, 409 catch 는 클로저가 캡처한 **이전** `selectedIso` 로 `setTakenMs` 를 찍고 `setSelectedIso(null)` 한다 → 방금 고른 칸은 사라지고 엉뚱한 칸이 "예약됨"이 된다. [frontend/components/proxy-booking-dialog.tsx:789]
+- [x] [Review][Patch] **[Med] `selectEarliestFreeSlot()` 의 막다른 길 분기가 stale `selectedIso` 를 안 지움** (edge) — `!first` 는 "미래의 빈 슬롯이 하나도 없다"는 뜻이라 현재 선택은 반드시 지났거나 점유된 것인데, 형제 거부 경로(가용성 effect `:268`·제출 재검증 `:420`)와 달리 선택을 남긴다. red "예약 가능한 시간이 없어요"가 뜬 채 그 셀은 계속 선택돼 있고 요약 블록도 그 시각을 보여준다. [frontend/components/proxy-booking-dialog.tsx:379]
+- [x] [Review][Patch] **[Med] 의사 로드 실패 시 "자동 배정"이 유일 항목으로 선택 가능해져 가용성 무지 상태를 앱이 권유** (edge+blind 교차) — `getDoctors` 실패면 `doctors` 가 `null` 로 남아 `doctorsEmpty` 가 false → Select 가 **활성**인데 항목은 자동 배정 하나뿐이다. 고르면 `:239` 가드로 조회를 건너뛰어 `takenMs` 가 null → 전 셀이 "예약 가능"으로 칠해지고 슬롯 범례도 사라진다. 5.3 이전엔 항목이 0개라 아무것도 커밋할 수 없었다. 자동 배정 항목을 `doctors` 비었을 때 렌더하지 않으면 이 경로와 아래 두 파생 건이 함께 닫힌다. [frontend/components/proxy-booking-dialog.tsx:707]
+- [x] [Review][Patch] **[Low] "이 날짜는 예약이 모두 찼어요"가 회색 status·빨강 alert 로 두 번 렌더** (edge+blind 교차) — 버튼의 실패 문구가 기존 막다른 길 안내(`:823-829`)와 바이트 동일이고 두 조건이 동시에 참일 수 있다. 같은 문장이 색만 다르게 두 줄, SR 에도 두 번(polite+assertive) 읽힌다. [frontend/components/proxy-booking-dialog.tsx:382]
+- [x] [Review][Patch] **[Low] 버튼 성공 분기가 보조기술에 무음(실패만 announced)** (edge+blind 교차) — 실패는 `role="alert"` 로 읽히는데 성공은 포커스가 버튼에 남고 격자 깊숙한 라디오의 `aria-checked` 만 바뀐다. SR 사용자는 **버튼이 아무것도 안 했을 때만 소리를 듣고 시각을 골랐을 땐 침묵을 듣는다.** 이 파일이 UX-DR9 에 들인 투자(spokenTime·라벨 체인)와 비대칭. [frontend/components/proxy-booking-dialog.tsx:389]
+- [x] [Review][Patch] **[Low] `Promise.all` catch 주석의 "이전 스냅샷 보존"이 절반만 참** (blind) — 의사·진료과·날짜 변경은 전부 `setTakenMs(null)` 을 먼저 하므로 그 경로에서 보존되는 스냅샷은 항상 `null` 이다. 주석이 참인 건 409 후 `availabilityNonce` 재조회 경로뿐(그 땐 409 로 찍은 마킹이 실제로 보존된다). 다음 사람이 이 실패 모드를 오해한다. [frontend/components/proxy-booking-dialog.tsx:249]
+- [x] [Review][Patch] **[Med] `.claude/rules/backend.md:57` 이 철회된 walk-in 을 예정 작업으로 지시** (auditor) — "(Story 5.3 워크인이 네 번째 호출자를 추가하기로 예정돼 있다.)" 가 남아 있다. 이건 날짜 박힌 기록물이 아니라 `paths: backend/**` 로 **자동 로드되는 살아있는 규칙**이라, 앞으로 모든 백엔드 세션에 오지 않을 호출자를 예고한다. correct-course 정리가 `_bmad-output/` 만 훑고 `.claude/rules/` 를 빠뜨렸다. [.claude/rules/backend.md:57]
+- [x] [Review][Patch] **[Low] `EXPERIENCE.md:33` 이 아직 직원 홈에 walk-in 바로가기를 둠** (auditor) — 같은 파일 `:39` 는 이 diff 가 "전용 화면 없음 · 예약 관리 → 대리 예약"으로 고쳤는데 `:33` 은 그대로다(그 바로가기는 코드에도 없다). [_bmad-output/planning-artifacts/ux-designs/ux-hospital-care-2026-07-13/EXPERIENCE.md:33]
+- [x] [Review][Patch] **[Low] `EXPERIENCE.md:54` 마이크로카피 표가 옛 거부 문구를 정본으로 유지** (auditor) — `:54` 는 "지금 이 진료과엔 빈 의사가 없어요…"를, `:83` 은 실제 배포된 "이 시간엔 모든 의사의 예약이 차 있어요…"를 정본이라 한다. 한 문서 안에 같은 거부의 정본이 둘이고, 백엔드에 존재하는 건 후자뿐. [_bmad-output/planning-artifacts/ux-designs/ux-hospital-care-2026-07-13/EXPERIENCE.md:54]
+- [x] [Review][Patch] **[Low] `DESIGN.md` 미정리 + correct-course §4 sweep 표에 누락** (auditor) — `:25`·`:73` 이 destructive red 를 "슬롯 충돌 · walk-in 빈 의사 없음"으로 서술한다. 색 의미론 자체는 살아남아(거부는 여전히 red 인라인) 모순은 아니고 문구 드리프트지만, CLAUDE.md 가 정본 UX 문서로 지목한 파일이 sweep 표에서 빠진 것은 §4 완결성 결함. [_bmad-output/planning-artifacts/ux-designs/ux-hospital-care-2026-07-13/DESIGN.md:25]
+- [x] [Review][Patch] **[Low] `epics.md:37` FR-16 이 전달된 흐름을 과장** (auditor) — "직원이 진료과만 고르면 … 가장 빠른 빈 시간으로 예약이 잡힌다"고 썼지만 코드는 **명시적 자동 배정 선택 + 명시적 버튼 클릭**을 요구한다(AC1 과 `handleSubmit` 이 미선택을 의도적으로 인라인 에러로 막는다). 제안서의 트레이드오프 표("접수 4단계")와 EXPERIENCE Flow 3 은 정확한데 이 한 줄만 느슨하다. 겸해서 AC5③ 관련 정직 보강: 슬롯 라벨 행 레이아웃(`items-baseline` → `flex-wrap items-center` + 중첩 div)이 직접 선택 경로에서도 바뀌었다 — 동작·문구는 무변경이라 AC5③ 자체는 성립하나 스토리가 이 시각 변화를 공개하지 않았다. [_bmad-output/planning-artifacts/epics.md:37]
+
+**[Defer] — 3건**
+
+- [x] [Review][Defer] **`selectedIsoRef` 미러 지연 — `setSelectedIso` 의 모든 writer 에 해당** [frontend/components/proxy-booking-dialog.tsx:389] — deferred, pre-existing. (codex) 새 핸들러가 ref 를 직접 안 쓰므로, 가용성 응답이 렌더 커밋↔패시브 effect 사이에 도착하면 `:266` 의 `cur` 가 stale 이다. **기존 슬롯 클릭 경로(`:817`)도 완전히 동일**해 한쪽만 고치면 비대칭이 된다. 근본 해결은 두 writer 를 작은 헬퍼로 모으는 것인데 그건 동결된 SlotPicker 핸들러를 건드린다. 창이 극히 좁고 409 가 자기교정한다.
+- [x] [Review][Defer] **400(과거 슬롯)은 인라인 경로가 없어 toast 로만 흐르고 선택도 안 지워진다** [frontend/components/proxy-booking-dialog.tsx:452] — deferred, pre-existing. 409 전용 분기는 5.1·6.3 이 세운 것이고 5.3 이 만들지 않았다. 처리 시 400 도 `slotErr` + 선택 해제로 흡수.
+- [x] [Review][Defer] **`doctorLoadError` 가 `aria-describedby` 체인에 id 없이 존재** [frontend/components/proxy-booking-dialog.tsx:722] — deferred, pre-existing. 5.3 이전 체인도 `doctorErr`/`doctorsEmpty` 뿐이라 로드 실패는 원래 연결된 적이 없다. 나타날 때 한 번 announced 되고, 트리거를 다시 포커스하면 사유가 안 읽힌다.
+
+**[Dismiss] — 2건**
+
+- **walk-in 이 "지금 서 있는 슬롯"을 못 잡고 다음 빈 슬롯으로 밀린다** (blind — "확인이 필요한 결정") — 결함이 아니라 **명시적으로 채택된 경계**다. correct-course 제안서 §2 트레이드오프 표·epics Story 5.3 경계·스토리 AC 경계 3곳에 기록됐고 사용자가 3개 안 중 이 안을 선택했다. 5.1 과거 가드에서 상속된 게 아니라 그 가드를 유지하기로 한 의식적 선택.
+- **버튼이 만료 직전 슬롯(14:29:58 → 14:30)을 돌려줄 수 있다** (blind) — 제출 직전 재검증(`:416`)이 설계된 방어층이고 두 번째 클릭에서 자기교정한다. 여유 마진(예: 2분 버퍼)을 넣는 건 제품 정책 발명이라 리뷰가 결정할 사안이 아니다.
+
 ## Dev Notes
 
 ### 🎯 이 스토리의 한 줄 요약
@@ -241,12 +274,18 @@ claude-opus-5 (Claude Code, dev-story)
 - **경계 유지(정직)**: 접수는 **다음 빈 슬롯**으로 잡힌다(5.1 과거 가드 유지 — curl ⑤ 로 실증). 예약 없이 온 환자도 예약 행으로 남는다. `medical_record.appointment_id` nullable·부분 유니크·5.1 충돌 합집합의 walk-in arm 전부 무수정 보존. TOCTOU 범위 밖.
 - **낙관 마킹 미도입 확인**: 5.2가 `patient/book` 에서 제거한 "자동 모드 성공 낙관 taken 마킹"은 이 다이얼로그에 원래 없다(성공 시 `resetForm()`+닫기) — 새로 넣지 않았다.
 - **사전 트리아지 2건**을 `deferred-work.md` 에 기록(가용성 조회 3사본·`AUTO_DOCTOR` 2사본) — 승인 범위("프런트 1파일·신규 파일 0")를 지킨 계산된 비용이지 놓친 결함이 아니다.
-- Status → review.
+- **코드리뷰 반영(2026-07-28)**: 4층(Codex 1 + Blind 10 + Edge 8 + Auditor 7) → 유니크 18건 → **Patch 13 · Defer 3 · Dismiss 2** 전부 처리. 코드 8건은 전부 새 버튼이 만든 조합(만석 오류가 의사 전환 후 잔존 · 버튼이 의사 선택 전 동작해 거짓 사유 표시 · 제출 중 클릭이 stale 클로저에 삼켜짐 · 막다른 길에서 선택 미해제 · 로드 실패 시 자동 배정만 남아 무지 상태 권유 · 문구 2중 렌더 · 성공 SR 무음 · catch 주석 부정확). 문서 5건은 correct-course sweep 잔재이며 그중 `.claude/rules/backend.md` 는 **자동 로드되는 살아있는 규칙**이라 최우선. **재검증**: pytest 126·ruff 0·lint/build 그린·백엔드 diff 0 유지 + 브라우저 재실측(버튼 게이트 3단계·교집합 회귀·요약 role=status·409 후 의사 변경 시 slotErr 해제·막다른 길 문구 1회+선택 해제) 전부 통과, 검증 예약 80–115 원복(잔여 `[22, 40, 41, 68, 69]`).
+- Status → review (**릴리스 게이트 미완** — `done` 은 커밋+배포+라이브 확인 3가지 전부, workflow.md).
 
 ### File List
 
 **frontend(수정 1):**
 - `frontend/components/proxy-booking-dialog.tsx` — `AUTO_DOCTOR` 센티넬·의사 Select 자동 배정 항목/캡션/aria·교집합 가용성 effect·`selectEarliestFreeSlot()`+[가장 빠른 시간] 버튼·`doctorLabel` 요약·자동 모드 성공 toast
+  - ⚠️ **공개(정직, 코드리뷰 지적)**: 슬롯 라벨 행의 레이아웃이 직접 선택 경로에서도 바뀌었다 — 버튼을 넣느라 `flex items-baseline justify-between gap-2` → `flex flex-wrap items-center justify-between gap-x-2 gap-y-1` + `dayLabel` 을 감싸는 중첩 flex. **동작·문구는 무변경**이라 AC5③("동작·문구 무변경")은 문자 그대로 성립하나, 기존 전화 예약 흐름의 시각이 미세하게 달라진 것을 스토리가 처음에 공개하지 않았다. 390×844 실측에서 가로 오버플로 0 확인.
+
+**추적·기획(코드리뷰 반영):**
+- `.claude/rules/backend.md` — SQL 조각 빌더 절의 철회된 walk-in 예고 제거(**자동 로드되는 살아있는 규칙**)
+- `_bmad-output/planning-artifacts/`: `epics.md`(FR-16 문구 정확화) · `EXPERIENCE.md`(직원 홈 행·거부 문구 정본) · `DESIGN.md`(red 사용처) · `sprint-change-proposal-2026-07-28.md`(§4 sweep 표에 누락 3파일 추가)
 
 **backend: 변경 없음(AC5 ① — `git diff --stat backend/` 비어 있음).**
 

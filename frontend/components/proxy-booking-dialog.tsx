@@ -151,6 +151,12 @@ export function ProxyBookingDialog({
     return slotsForSeoulDay(effectiveYmd).filter((s) => new Date(s.iso).getTime() > nowMs);
   }, [effectiveYmd]);
   const dayLabel = useMemo(() => formatSeoulDayLabel(effectiveYmd), [effectiveYmd]);
+  // 남은 슬롯이 전부 점유된 막다른 길 — 격자 아래 안내 문단과 [가장 빠른 시간] 실패 분기가 공유한다.
+  // 한 벌로 두는 이유(코드리뷰): 둘이 각자 판정하면 같은 문장이 회색 status·빨강 alert 로 두 번 뜬다.
+  const allSlotsTaken =
+    slots.length > 0 &&
+    takenMs !== null &&
+    slots.every((s) => takenMs.has(new Date(s.iso).getTime()));
 
   // 진료과 로드 — 열렸을 때 1회. 닫힌 채 마운트돼 있으므로 마운트 시점에 네트워크를 때리지 않는다.
   // 다른 로더와 같은 cancelled 가드를 둔다(늦게 도착한 실패가 성공 위에 오류를 덮어쓰지 않게).
@@ -270,8 +276,12 @@ export function ProxyBookingDialog({
         }
       })
       .catch(() => {
-        // 조회 실패 시 이전 스냅샷(409로 확인된 마킹 포함)을 보존한다 — null 리셋은 방금 확인한
-        // 충돌 셀까지 되살린다(리뷰 P3). 미조회 상태면 어차피 null(조용한 강등 유지).
+        // 조회 실패 시 이전 스냅샷을 보존한다 — null 리셋은 방금 확인한 충돌 셀까지 되살린다(리뷰 P3).
+        // ⚠️ 스냅샷이 실제로 의미 있는 건 **409 후 availabilityNonce 재조회 경로뿐**이다(그 땐 409 로
+        // 찍은 마킹이 살아 있다). 의사·진료과·날짜 변경 경로는 핸들러가 먼저 setTakenMs(null) 을 하므로
+        // 여기서 보존되는 값은 항상 null 이고, 실제 열화는 "taken 표시 없이 렌더 + 범례 소실"이다
+        // (코드리뷰 — 주석이 실패 모드를 오해시키던 것을 정정). 어느 쪽이든 제출 시 서버가 최종 방어.
+        // 자동 모드의 all-or-nothing reject 는 의도다 — 일부 의사만으로 교집합을 내면 과다 차단이 된다.
       });
     return () => {
       cancelled = true;
@@ -353,6 +363,10 @@ export function ProxyBookingDialog({
     setTakenMs(null); // 이전 의사의 점유 표시가 남지 않게(새 의사 선택 시 재조회).
     setDeptErr(null);
     setDoctorErr(null);
+    // 슬롯 오류도 함께 지운다(코드리뷰) — 안 지우면 이전 의사에서 난 "예약이 모두 찼어요"가 새 과의
+    // 널널한 그리드 위에 red 로 남고, 그 오류 id 가 radiogroup 의 aria-labelledby 에도 계속 붙는다.
+    // 날짜 변경 핸들러는 원래 이걸 하고 있었다(의사·진료과만 빠져 있던 비대칭).
+    setSlotErr(null);
   }
 
   function handleDateChange(v: string) {
@@ -377,13 +391,19 @@ export function ProxyBookingDialog({
       return ms > nowMs && !(takenMs?.has(ms) ?? false);
     });
     if (!first) {
+      // 고를 게 없다는 건 현재 선택도 지났거나 점유됐다는 뜻이다 — 형제 거부 경로(가용성 effect·제출
+      // 재검증)처럼 선택을 함께 해제한다(코드리뷰). 안 지우면 red "시간이 없어요" 와 요약 블록의
+      // 시각이 동시에 떠 서로 모순된다.
+      setSelectedIso(null);
       // 남은 시간이 아예 없는 것과 전부 점유된 것을 구분해 안내한다(막다른 길에서 다음 행동 제시).
+      // 단 격자 아래 안내 문단이 이미 같은 문장을 띄우고 있으면(allSlotsTaken) 중복 렌더·중복 announce
+      // 가 되므로 생략한다(코드리뷰).
       const anyFuture = slots.some((s) => new Date(s.iso).getTime() > nowMs);
-      setSlotErr(
-        anyFuture
-          ? "이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요."
-          : "이 날짜엔 예약 가능한 시간이 없어요. 다른 날짜를 골라 주세요.",
-      );
+      if (anyFuture) {
+        if (!allSlotsTaken) setSlotErr("이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.");
+      } else {
+        setSlotErr("이 날짜엔 예약 가능한 시간이 없어요. 다른 날짜를 골라 주세요.");
+      }
       return;
     }
     setSelectedIso(first.iso);
@@ -674,6 +694,8 @@ export function ProxyBookingDialog({
                 // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(리뷰 P2 — false-block 방향은
                 // 서버 백스톱이 없다). 새 응답이 오면 effect 가 다시 채운다.
                 setTakenMs(null);
+                // 이전 의사 기준의 슬롯 오류도 함께 지운다(코드리뷰 — handleDeptChange 와 동일 이유).
+                setSlotErr(null);
               }}
               disabled={!deptId || doctorsLoading || doctorsEmpty}
             >
@@ -705,8 +727,15 @@ export function ProxyBookingDialog({
                 />
               </SelectTrigger>
               <SelectContent>
-                {/* 자동 배정 — 항상 첫 항목(의사 목록이 로드된 뒤에만 Select 가 열린다). */}
-                <SelectItem value={AUTO_DOCTOR}>자동 배정</SelectItem>
+                {/* 자동 배정 — 의사 목록이 실제로 있을 때만 첫 항목으로 노출한다(코드리뷰).
+                    로드 실패(doctors=null)면 doctorsEmpty 가 false 라 Select 가 활성인데, 이 항목을
+                    무조건 렌더하면 "자동 배정"만 있는 드롭다운이 되어 앱이 **가용성 무지 상태를 권유**
+                    하게 된다(가용성 effect 가 조기 return → 전 셀이 예약 가능으로 칠해지고 범례도 소실).
+                    5.3 이전엔 항목이 0개라 아무것도 커밋할 수 없었다 — 그 성질을 되돌린다.
+                    부수 효과로 "doctors 가 [] 로 바뀌며 auto 가 잠기는" 막다른 길도 도달 불가가 된다. */}
+                {(doctors ?? []).length > 0 && (
+                  <SelectItem value={AUTO_DOCTOR}>자동 배정</SelectItem>
+                )}
                 {(doctors ?? []).map((doc) => (
                   <SelectItem key={doc.id} value={String(doc.id)}>
                     {doc.name} 선생님
@@ -785,7 +814,12 @@ export function ProxyBookingDialog({
               <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-xs text-muted-foreground">{dayLabel}</span>
                 {/* walk-in 접수 지름길(Story 5.3) — 격자가 있을 때만 노출한다(슬롯 0개면 격자 대신
-                    안내 문단이 렌더되므로 고를 대상이 없다). */}
+                    안내 문단이 렌더되므로 고를 대상이 없다).
+                    ⚠️ 의사 선택 전에는 비활성(코드리뷰): "빈 시간"은 의사가 정해져야 성립하는 개념이라,
+                    takenMs 가 없는 상태에서 고르면 나중에 가용성이 도착했을 때 "고른 시간이 그새
+                    예약됐어요"라는 **거짓 사유**로 선택이 해제된다(처음부터 차 있었던 것).
+                    제출 중에도 비활성 — mid-flight 클릭은 409 catch 의 stale 클로저가 삼켜서
+                    엉뚱한 셀을 taken 으로 찍는다. */}
                 {slots.length > 0 && (
                   <Button
                     type="button"
@@ -793,6 +827,7 @@ export function ProxyBookingDialog({
                     size="sm"
                     className="shrink-0"
                     onClick={selectEarliestFreeSlot}
+                    disabled={!doctorId || submitting}
                   >
                     가장 빠른 시간
                   </Button>
@@ -819,10 +854,9 @@ export function ProxyBookingDialog({
                 }}
               />
             )}
-            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분. */}
-            {slots.length > 0 &&
-              takenMs !== null &&
-              slots.every((s) => takenMs.has(new Date(s.iso).getTime())) && (
+            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분.
+                판정은 allSlotsTaken 한 벌([가장 빠른 시간] 실패 분기와 공유 — 중복 문구 방지). */}
+            {allSlotsTaken && (
                 <p role="status" className="text-sm text-muted-foreground">
                   이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
                 </p>
@@ -834,9 +868,15 @@ export function ProxyBookingDialog({
             )}
           </div>
 
-          {/* 요약 — 모두 골랐을 때 확인용 */}
+          {/* 요약 — 모두 골랐을 때 확인용.
+              role="status": [가장 빠른 시간] 성공 분기가 보조기술에 무음이던 문제를 닫는다(코드리뷰).
+              실패는 role="alert" 로 읽히는데 성공은 격자 깊숙한 라디오의 aria-checked 만 바뀌어
+              SR 사용자가 "버튼이 아무것도 안 했을 때만" 소리를 들었다. 이 블록이 곧 확인 문구다. */}
           {patient && deptName && doctorLabel && slotLabel && (
-            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+            <div
+              role="status"
+              className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm"
+            >
               📅 <b>{dayLabel} {slotLabel}</b> · {deptName} · {doctorLabel} · {patient.name}님
               (#{patient.id})
             </div>
