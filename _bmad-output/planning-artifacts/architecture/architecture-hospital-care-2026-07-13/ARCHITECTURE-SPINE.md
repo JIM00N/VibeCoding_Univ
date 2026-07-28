@@ -217,11 +217,13 @@ erDiagram
 | 예약 생성·가용성 (FR-6, FR-15) | `services/availability` `check_and_occupy` + `slots.to_slot` | AD-3, AD-4 |
 | 예약 확정/취소/의사변경 (FR-7~8) | `services/appointments` | AD-4, AD-5 |
 | 진료 기록·처방 (FR-9~10) | `services/records`(완료 전이 동일 tx) | AD-5, AD-6 |
-| walk-in 즉시 진료 (FR-16) | `services/records` + `check_and_occupy` | AD-3, AD-4, AD-6 |
+| walk-in 환자 접수 (FR-16) | `services/appointments` 자동 배정 경로 (= 예약 생성과 같은 관문) | AD-3, AD-4 |
 | 조회(환자/직원) (FR-11~12) | `routers/*` 읽기 + `patient_id` 필터 | AD-8, AD-10 |
 | 참조데이터·시드 (FR-13~14) | `db/seed` | AD-9 |
 | 배포·RLS (NFR-1, NFR-4) | 프런트 Vercel · 백 Railway + `db/migrations/001_rls` | AD-7, AD-9 |
 | 데이터 정합성 (NFR-2) | `db/migrations` (CHECK·부분유니크) | AD-9 |
+
+> ⚠️ **2026-07-28 correct-course — walk-in 전용 경로 철회.** FR-16의 "예약 없이 `appointment_id` null 기록"은 구현하지 않는다(FR-18 대리 예약 + FR-6 P1 자동 배정이 흡수 — `sprint-change-proposal-2026-07-28.md`). **AD-4·AD-6의 walk-in 조항은 문서·코드 모두 그대로 둔다**: 충돌 합집합의 `medical_record(appointment_id null)` arm은 `db/availability.py`에 구현돼 있고, `medical_record.appointment_id` nullable과 `uq_medical_record_appointment`의 부분 조건도 유지된다. 죽은 규칙이 아니라 **보존된 설계 여유**다 — 전용 경로를 되살릴 때 그대로 쓰이고, 지금 걷어내면 5.1 게이트 SQL에 회귀 위험만 생긴다. 다만 **AD-6의 "walk-in → 배정 의사의 현재 소속" 분기는 현재 도달하는 코드가 없다**(예약 기반 복사만 동작).
 
 ## Deferred
 
