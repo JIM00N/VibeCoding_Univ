@@ -69,6 +69,10 @@ export default function BookAppointmentPage() {
 
   // 점유 슬롯(epoch ms) — null 이면 미조회/조회 실패(taken 없이 렌더). nonce 는 409·성공 후 재조회 트리거.
   const [takenMs, setTakenMs] = useState<ReadonlySet<number> | null>(null);
+  // 환자 축(FR-15b) — 이 환자가 이미 잡은 활성 슬롯. takenMs 와 **따로** 둔다: 의사를 바꾸면
+  // takenMs 는 통째로 갈리지만 환자 축은 그대로라, 한 집합에 섞으면 의사 변경 때 함께 지워진다
+  // (코드리뷰 High: 409 마킹이 재조회로 지워지던 원인이 정확히 그 섞임이었다).
+  const [patientBusyMs, setPatientBusyMs] = useState<ReadonlySet<number>>(new Set());
   const [availabilityNonce, setAvailabilityNonce] = useState(0);
   // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(리뷰 P8).
   const selectedIsoRef = useRef<string | null>(null);
@@ -128,7 +132,8 @@ export default function BookAppointmentPage() {
   // 치명 아님 — taken 없이 렌더하고 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
   // stale taken 비우기는 진료과·의사·날짜 변경 핸들러가 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
-    if (!doctorId) return;
+    // patient 는 아래에서 patient.id 로 쓰인다 — 가드 리다이렉트 전 첫 프레임엔 null 일 수 있다.
+    if (!doctorId || !patient) return;
     // 자동 배정인데 의사 목록이 비어 있으면 조회 생략. 이 가드의 실제 도달 경로는 과도기가 아니라
     // **지속 상태**다(코드리뷰) — 진료과 전환 직후는 핸들러가 doctorId 를 먼저 null 로 만들어 윗줄
     // 가드에서 이미 끊기고, 여기 오는 경우는 의사 로드 실패(catch 의 setDoctors([]))·의사 0명 과에서
@@ -146,13 +151,18 @@ export default function BookAppointmentPage() {
     const nextTaken: Promise<Set<number>> =
       doctorId === AUTO_DOCTOR
         ? Promise.all(
-            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso)),
+            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso, patient.id)),
           ).then((avs) => {
+            // 환자 축은 어느 응답이나 같다(의사 무관) — 첫 응답에서 취한다.
+            setPatientBusyMs(toMsSet(avs[0].patient_taken));
             const sets = avs.map((av) => toMsSet(av.taken));
             // 교집합 — 모든 의사의 taken 에 공통인 슬롯만(전원 점유). sets 는 위 가드로 비지 않는다.
             return new Set([...sets[0]].filter((ms) => sets.every((s) => s.has(ms))));
           })
-        : api.getAvailability(Number(doctorId), startIso, endIso).then((av) => toMsSet(av.taken));
+        : api.getAvailability(Number(doctorId), startIso, endIso, patient.id).then((av) => {
+            setPatientBusyMs(toMsSet(av.patient_taken));
+            return toMsSet(av.taken);
+          });
     nextTaken
       .then((next) => {
         if (cancelled) return;
@@ -171,7 +181,15 @@ export default function BookAppointmentPage() {
     return () => {
       cancelled = true;
     };
-  }, [doctorId, doctors, selectedYmd, availabilityNonce]);
+  }, [doctorId, doctors, selectedYmd, availabilityNonce, patient]);
+
+  // 슬롯 피커가 실제로 막아야 할 집합 = 의사 축 ∪ 환자 축(FR-15b). 두 축을 상태에선 분리해 두고
+  // **렌더 시점에만** 합친다 — 분리 덕에 의사 변경이 환자 축을 지우지 않는다.
+  // 둘 다 없으면 undefined 를 넘겨 기존 2상태 렌더(회귀 0)를 유지한다(조용한 강등).
+  const unavailableMs = useMemo(() => {
+    if (takenMs === null && patientBusyMs.size === 0) return undefined;
+    return new Set([...(takenMs ?? []), ...patientBusyMs]);
+  }, [takenMs, patientBusyMs]);
 
   const deptItems = useMemo(
     () => Object.fromEntries((departments ?? []).map((d) => [String(d.id), d.name])),
@@ -240,22 +258,24 @@ export default function BookAppointmentPage() {
       setCreated(appt);
       // 성공 문구는 정직하게 — 생성 직후 status 는 대기라 "확정"이라 하지 않는다(UX-DR10).
       toast.success("예약을 접수했어요. 상태는 '대기'로 시작해요.");
-      // 방금 잡은 슬롯 처리 — **직접 선택 모드만** 즉시 taken(5.1 리뷰 P1: 안 하면 그 셀이 계속
-      // "예약 가능"으로 남아 재제출 시 자기 예약과 충돌하는 409 를 받는다). 자동 모드는 낙관 마킹을
-      // 하지 않는다 — 교집합 의미론상 다른 의사가 비어 있으면 그 셀은 여전히 "예약 가능"이 참이라
-      // 마킹해도 재조회가 곧 되돌려 깜빡임만 남고, 재제출도 409 가 아니라 다른 의사 201 이다
-      // (Story 5.2 코드리뷰 Med). 어느 모드든 아래 재조회가 서버 진실과 동기화한다.
-      if (doctorId !== AUTO_DOCTOR) {
-        const bookedMs = new Date(selectedIso as string).getTime();
-        setTakenMs((prev) => new Set([...(prev ?? []), bookedMs]));
-      }
+      // 방금 잡은 슬롯은 **모드 무관** 즉시 환자 축으로 마킹한다(FR-15b, 2026-07-28 chore).
+      // ⚠️ 5.2 때의 "자동 모드는 마킹하지 않는다 — 재제출도 409 가 아니라 다른 의사 201 이다"는
+      // 근거가 006 인덱스로 **거짓이 됐다**: 같은 환자가 같은 슬롯을 재제출하면 의사가 누구든 409 다.
+      // 환자 축에 넣으므로 의사 축 재조회가 이 마킹을 덮지 않는다(교집합 의미론도 그대로 보존).
+      const bookedMs = new Date(selectedIso as string).getTime();
+      setPatientBusyMs((prev) => new Set([...prev, bookedMs]));
       setAvailabilityNonce((n) => n + 1);
       // 같은 슬롯 중복 제출 방지 — 다시 예약하려면 슬롯을 새로 고르게 한다.
       setSelectedIso(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && selectedIso) {
         // 슬롯 충돌(Story 5.1, UX-DR7 도메인 거부) — 서버 detail 그대로 red 인라인 + 그 셀 즉시
-        // taken + 선택 해제, 그리고 재조회로 다른 셀도 서버 진실과 동기화한다(toast 아님 — 폼 보존).
+        // 막기 + 선택 해제, 그리고 재조회로 다른 셀도 서버 진실과 동기화한다(toast 아님 — 폼 보존).
+        // 낙관 마킹은 **의사 축**에 그대로 둔다 — 어느 축의 409 인지 프런트는 모르고(가진 건 상태
+        // 코드뿐, 문구 매칭은 취약하다), 환자 축에 넣으면 의사 충돌까지 환자 축으로 들어가 의사를
+        // 바꿔도 계속 막히는 과다 차단이 된다. 바로 뒤 재조회가 두 축을 **함께** 실어오므로
+        // (patient_taken, FR-15b) 어느 쪽이 원인이든 셀은 계속 막힌 채로 남는다 — 환자 축 마킹이
+        // 재조회에 지워져 무한 재시도가 되던 문제(코드리뷰 High)는 그래서 원인부터 사라졌다.
         setSlotErr(err.message);
         const failedMs = new Date(selectedIso).getTime();
         setTakenMs((prev) => new Set([...(prev ?? []), failedMs]));
@@ -476,7 +496,7 @@ export default function BookAppointmentPage() {
                 slots={slots}
                 value={selectedIso}
                 ariaLabelledBy="slot-label"
-                takenMs={takenMs ?? undefined}
+                takenMs={unavailableMs}
                 onChange={(iso) => {
                   setSelectedIso(iso);
                   setSlotErr(null);
@@ -485,8 +505,8 @@ export default function BookAppointmentPage() {
             )}
             {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분. */}
             {slots.length > 0 &&
-              takenMs !== null &&
-              slots.every((s) => takenMs.has(new Date(s.iso).getTime())) && (
+              unavailableMs !== undefined &&
+              slots.every((s) => unavailableMs.has(new Date(s.iso).getTime())) && (
                 <p role="status" className="text-sm text-muted-foreground">
                   이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
                 </p>

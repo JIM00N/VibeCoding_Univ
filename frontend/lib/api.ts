@@ -65,7 +65,10 @@ export type AppointmentCreate = {
 };
 
 // 가용성 정규 응답 모델(Story 5.1, FR-15). taken = 점유된 30분 슬롯 시작 시각(ISO UTC) 목록.
-export type Availability = { doctor_id: number; taken: string[] };
+// patient_taken = 그 **환자**가 이미 잡은 활성 예약 슬롯(FR-15b, 2026-07-28 chore). 두 축은
+// 섞지 않는다 — taken 은 의사별이라 자동 배정에서 교집합을 내지만, 환자 축은 의사와 무관해
+// 교집합 대상이 아니라 합집합으로 얹는다.
+export type Availability = { doctor_id: number; taken: string[]; patient_taken: string[] };
 
 // 약 정규 응답 모델(Story 3.2). 시드 전용 참조 데이터(FR-13) — unit 은 표시에 쓰지 않는 선택 필드.
 export type Drug = { id: number; name: string; unit: string | null };
@@ -227,13 +230,20 @@ export const api = {
     doctorId: number,
     startIso: string,
     endIso: string,
+    patientId?: number,
   ): Promise<Availability> => {
     const query =
       `doctor_id=${encodeURIComponent(String(doctorId))}` +
-      `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`;
+      `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}` +
+      // 환자 축(FR-15b) — 주면 그 환자가 이미 잡은 슬롯이 patient_taken 으로 온다. 없으면 빈 배열.
+      (patientId !== undefined ? `&patient_id=${encodeURIComponent(String(patientId))}` : "");
     const data = await request<Availability>(`/availability?${query}`);
-    // 다른 조회와 동일한 방어 — taken 이 배열이 아니면 빈 배열로 정규화(화면 크래시 방지).
-    return { doctor_id: doctorId, taken: Array.isArray(data?.taken) ? data.taken : [] };
+    // 다른 조회와 동일한 방어 — 배열이 아니면 빈 배열로 정규화(화면 크래시 방지).
+    return {
+      doctor_id: doctorId,
+      taken: Array.isArray(data?.taken) ? data.taken : [],
+      patient_taken: Array.isArray(data?.patient_taken) ? data.patient_taken : [],
+    };
   },
 
   /** 예약 생성(FR-6). 성공 시 생성된 예약(정규 모델, status=대기)을 돌려준다 — doctor_id: null

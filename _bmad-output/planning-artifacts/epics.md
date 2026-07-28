@@ -99,6 +99,7 @@ inputDocuments:
 - **FR-13**: Epic 1 — 참조 데이터(병원1·진료과·의사·약) 시드 존재
 - **FR-14**: Epic 1 — 시연용 초기 시드 데이터 포함
 - **FR-15**: Epic 5 — (의사, 30분 슬롯) 공통 가용성 충돌 차단(앱 레벨)
+- **FR-15b**: 에픽 밖 — 2026-07-28 `chore/patient-slot-guard`(환자 축 중복 차단, DB 부분 유니크 인덱스 + `/availability` 환자 축 사전 표시). Epic 1~6 종료 후 발견된 구멍이라 스토리 없이 chore 로 처리(사용자 결정)
 - **FR-16**: Epic 5 — walk-in 환자 접수(대리 예약의 자동 배정 + 가장 빠른 빈 시간, 빈 의사 없으면 거부). 전용 경로는 2026-07-28 correct-course로 철회
 - **FR-1b·FR-17**: Epic 6 — 의사 역할 진입·의사별 배정 예약 뷰·완료 분류 (2026-07-25 correct-course)
 - **FR-18**: Epic 6 — 직원 대리 예약 (2026-07-25 correct-course)

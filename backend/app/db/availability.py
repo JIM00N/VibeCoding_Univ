@@ -111,6 +111,34 @@ _SELECT_TAKEN_SLOTS = f"""
 """
 
 
+# 한 환자의 [start, end) 활성 예약 슬롯 — 환자 축 사전 표시용(FR-15b, 2026-07-28 chore).
+# ⚠️ 006 부분 유니크 인덱스와 **판정 범위가 정확히 같아야 한다**(status in ('대기','확정'),
+# appointment 만). 넓히면 서버가 받아줄 슬롯을 화면이 막고(과다 차단), 좁히면 제출 후 409 가
+# 튀어나온다. walk-in medical_record 를 합집합하지 않는 것도 그래서다 — 인덱스가 단일 테이블
+# 제약이라 그 arm 을 못 보고, 화면만 막으면 두 층이 어긋난다.
+# 의사 축(_SELECT_TAKEN_SLOTS)과 달리 doctor 조건이 없다 — 이 축은 의사와 무관하다.
+_SELECT_PATIENT_TAKEN_SLOTS = f"""
+    select distinct {SLOT_EXPR.format(col="a.reserved_at")} as slot
+    from public.appointment a
+    where a.patient_id = %(patient_id)s
+      and a.status in ('대기', '확정')
+      and {SLOT_EXPR.format(col="a.reserved_at")} >= %(start)s
+      and {SLOT_EXPR.format(col="a.reserved_at")} < %(end)s
+    order by slot
+"""
+
+
+def select_patient_taken_slots(patient_id: int, start: datetime, end: datetime) -> list[datetime]:
+    """한 환자의 [start, end) 활성 예약 슬롯 시작 시각 목록(FR-15b). 파라미터화 SQL."""
+    with get_pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                _SELECT_PATIENT_TAKEN_SLOTS,
+                {"patient_id": patient_id, "start": start, "end": end},
+            )
+            return [row["slot"] for row in cur.fetchall()]
+
+
 def select_taken_slots(doctor_id: int, start: datetime, end: datetime) -> list[datetime]:
     """한 의사의 [start, end) 점유 슬롯 시작 시각 목록을 반환한다. 파라미터화 SQL(injection 방지)."""
     with get_pool().connection() as conn:

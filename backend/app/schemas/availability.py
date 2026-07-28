@@ -15,3 +15,8 @@ class AvailabilityOut(BaseModel):
 
     doctor_id: int
     taken: list[datetime]
+    # 환자 축(FR-15b, 2026-07-28 chore) — 그 환자가 이미 잡은 활성 예약 슬롯. taken 과 **섞지
+    # 않는다**: taken 의 의미("그 의사가 찼다")를 보존해야 기존 소비자가 회귀 없고, 자동 배정의
+    # 의사 교집합 계산도 이 축을 섞으면 망가진다(환자 축은 의사와 무관해 교집합 대상이 아니다).
+    # patient_id 쿼리 파라미터가 없으면 항상 빈 배열(키는 언제나 존재 — AD-10 모양 고정).
+    patient_taken: list[datetime] = []

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import NoReturn
 
 from fastapi import HTTPException
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
@@ -40,11 +41,34 @@ CAS_CONFLICT_DETAIL = "예약 상태가 방금 바뀌었어요. 목록을 새로
 _PATIENT_FK_DETAIL = "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."
 _CREATE_RESULT_LOST_DETAIL = "예약 생성 결과를 확인하지 못했어요. 잠시 후 다시 시도해 주세요."
 
-# 환자 1인 동시 예약 금지(2026-07-28 chore) — db/migrations/006 의 부분 유니크 인덱스가 올린
-# UniqueViolation 의 문구. FR-15 의 가용성 단위는 (의사, 슬롯)이라 게이트가 환자 중복을 못 봤다.
-# 기존 세 409(생성 충돌·전원 점유·의사 변경 충돌)와 문구로 구분한다 — 원인이 "그 시간에 그 의사가
-# 찼다"가 아니라 "그 환자가 이미 다른 예약을 갖고 있다"라서 다음 행동 안내가 다르다.
-_PATIENT_SLOT_TAKEN_DETAIL = "같은 시간에 다른 예약이 이미 있어요. 다른 시간을 골라 주세요."
+# 환자 1인 동시 예약 금지(2026-07-28 chore, FR-15b) — db/migrations/006 부분 유니크 인덱스.
+# FR-15 의 가용성 단위는 (의사, 슬롯)이라 게이트가 환자 축을 아예 보지 않는다.
+# 문구가 **주어를 밝힌다**("이 환자는") — 슬롯 관련 기존 409 셋은 전부 "그 시간에 그 의사가 찼다"라
+# 직원이 이 문구를 그렇게 읽으면 의사를 바꿔 재시도하고 또 실패한다(코드리뷰 High). 행동을 바꾸는
+# 정보는 "제약이 환자 쪽"이라는 사실이다.
+_PATIENT_SLOT_TAKEN_DETAIL = "이 환자는 그 시간에 이미 다른 예약이 있어요. 다른 시간을 골라 주세요."
+
+# 006 인덱스 이름 — 매핑이 **제약 이름을 확인**하기 위한 상수.
+_PATIENT_SLOT_INDEX = "uq_appointment_patient_slot"
+
+
+def _reject_unique_violation(exc: UniqueViolation) -> NoReturn:
+    """UniqueViolation 을 환자 축 409 로 매핑하되 **제약 이름을 확인**한다(생성 두 경로 공용).
+
+    이름을 안 보면 안 되는 이유(코드리뷰 High): deferred-work.md 127 이 TOCTOU 백스톱으로
+    `appointment(doctor_id, reserved_at)` 부분 유니크를 예정하고 있고 "적용 시 UniqueViolation
+    → 409 매핑 추가 필요"라고 못박아 뒀다. 이름 미확인 매핑은 그게 들어오는 순간 **의사 충돌을
+    환자 문구로 오보**한다 — 직원은 의사를 바꿔 재시도하고 계속 실패한다. 같은 함정이
+    medical_records 쪽에 이미 defer 로 기록돼 있다(deferred-work.md 60).
+
+    이름이 None 이면 환자 축으로 본다 — psycopg 의 diag 는 **서버 응답에서만** 채워지므로
+    손제작 예외(테스트 페이크)는 항상 None 이고, 실 DB 에서 온 위반은 항상 이름이 있다.
+    모르는 제약은 삼키지 않고 원본을 그대로 올린다 — 조용한 409 오보보다 500 이 정직하다.
+    """
+    name = exc.diag.constraint_name
+    if name is None or name == _PATIENT_SLOT_INDEX:
+        raise HTTPException(status_code=409, detail=_PATIENT_SLOT_TAKEN_DETAIL) from exc
+    raise exc
 
 
 def fetch_appointment_or_404(appointment_id: int) -> dict:
@@ -122,9 +146,7 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
         ) from exc
     except UniqueViolation as exc:
         # 006 부분 유니크 인덱스: 그 환자가 그 슬롯에 이미 활성 예약을 갖고 있다(다른 의사여도).
-        # appointment 의 유니크 제약은 이 인덱스뿐이고 id 는 IDENTITY 라 pkey 충돌이 없으므로,
-        # 여기 오는 UniqueViolation 은 환자 중복 하나로 특정된다(FK 매핑과 같은 소거 논법).
-        raise HTTPException(status_code=409, detail=_PATIENT_SLOT_TAKEN_DETAIL) from exc
+        _reject_unique_violation(exc)
     except ForeignKeyViolation as exc:
         # 의사·진료과는 위에서 검증했으므로 남은 FK 위반은 사실상 존재하지 않는 patient_id
         # (오래된 localStorage 신원·재시드 후 id 이동 등). 전역 500 대신 친절한 400 한국어로(AD-10).
@@ -162,7 +184,11 @@ def _create_appointment_auto(payload: AppointmentCreate, slot: datetime) -> Appo
         ) from exc
     except UniqueViolation as exc:
         # 자동 배정도 같은 매핑 — pick 은 "그 의사가 빈가"만 보므로 환자 중복은 인덱스가 잡는다.
-        raise HTTPException(status_code=409, detail=_PATIENT_SLOT_TAKEN_DETAIL) from exc
+        # ⚠️ 이 핸들러는 그 과에 **다른 빈 의사가 있을 때만** 도달한다: 환자 자기 예약이 마지막
+        # 빈 의사까지 채운 경우 pick 이 0행이라 위의 NoFreeDoctorError("모든 의사의 예약이 차
+        # 있어요")가 먼저 난다 — 원인은 환자 축인데 문구는 병원이 찼다고 말한다(코드리뷰 Medium,
+        # 사전 표시가 FR-15b 축을 함께 그리므로 실제 도달은 드물다).
+        _reject_unique_violation(exc)
     except ForeignKeyViolation as exc:
         # 의사는 pick 이 보장하므로 남은 FK 위반은 존재하지 않는 patient_id — 직접 선택 경로와 동일 매핑.
         raise HTTPException(status_code=400, detail=_PATIENT_FK_DETAIL) from exc

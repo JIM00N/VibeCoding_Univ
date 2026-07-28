@@ -7,7 +7,7 @@ paradigm: 3-tier client-server + layered backend
 scope: 환자↔병원 진료관리 풀스택 앱 (Next.js → FastAPI → Supabase). 단일 병원, 로그인 없음(역할 선택).
 status: final
 created: '2026-07-13'
-updated: '2026-07-13'
+updated: '2026-07-28' # AD-4 환자 축 보강(FR-15b) — chore/patient-slot-guard
 binds: [FR-1..FR-16, NFR-1..NFR-5]
 sources:
   - planning-artifacts/prds/prd-hospital-care-2026-07-12/prd.md
@@ -73,7 +73,7 @@ flowchart TB
 - **Rule:** 슬롯 = 시각을 **30분 격자로 floor(UTC 기준)**. **점유 판정의 source of truth는 SQL 충돌 쿼리**(AD-4)이며, 그 쿼리는 `appointment.reserved_at`과 `medical_record.visited_at`을 **동일한 floor 식**으로 정규화해 `(doctor_id, slot)`을 비교한다 — 저장 형태(초 단위 값)에 의존하지 않는다. Python `to_slot()`은 이 식을 **그대로 미러링**해 예약 시각 검증·UX에만 쓰고, 원시 timestamp를 직접 비교하지 않는다. floor 식은 정확히 한 벌(SQL·Python 각 1). *(minute 기반 정렬은 KST처럼 정시 오프셋 tz에서 tz-불변이라 `reserved_at` 30분 CHECK와 일치.)*
 
 ### AD-4 — 가용성 검사는 단일 서비스 함수, 검사+삽입을 **한 트랜잭션**으로
-- **Binds:** FR-6, FR-7, FR-15, FR-16
+- **Binds:** FR-6, FR-7, FR-15, FR-15b, FR-16
 - **Prevents:** 세 쓰기 경로(예약 생성·의사 변경·walk-in)가 충돌 검사를 제각각 구현하거나, 검사와 삽입 사이 경쟁이 생기는 것
 - **Rule:** 점유가 발생하는 모든 쓰기는 삽입 직전에 단 하나의 `check_and_occupy(conn, doctor_id, slot, exclude_appointment_id=None)`를 호출한다. **이 함수는 자체 커넥션을 열지 않고 호출자(서비스)가 연 트랜잭션(`conn`)을 받아 검사와 삽입을 같은 트랜잭션에서 수행한다** — 그래야 단일 세션에서 검사↔삽입 원자성이 성립. 충돌원은 **두 테이블의 합집합** — `appointment`(status ∈ 대기·확정) ∪ walk-in `medical_record`(`appointment_id` null) — 을 `(doctor_id, slot)`으로 본다. 취소=슬롯 해제, 완료=과거라 충돌 무관.
   - **예약 생성(P0):** 의사 **직접 선택 필수** → `appointment.doctor_id`는 항상 채워짐(DB는 nullable이나 앱이 P0에서 강제; nullable은 스키마 안정성·P1 자동배정용).

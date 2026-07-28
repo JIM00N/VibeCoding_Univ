@@ -41,7 +41,9 @@ def test_get_availability_returns_taken_slots(monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data.keys()) == {"doctor_id", "taken"}
+    # patient_taken 은 환자 축(FR-15b) — patient_id 미지정이라 빈 배열이지만 키는 항상 있다.
+    assert set(data.keys()) == {"doctor_id", "taken", "patient_taken"}
+    assert data["patient_taken"] == []
     assert data["doctor_id"] == 3
     assert len(data["taken"]) == 2
     # 슬롯은 ISO-8601 UTC 로 직렬화된다(프런트는 문자열 비교가 아니라 epoch ms 로 정규화해 매칭).
@@ -63,7 +65,7 @@ def test_get_availability_empty_returns_empty_list(monkeypatch):
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"doctor_id": 3, "taken": []}
+    assert resp.json() == {"doctor_id": 3, "taken": [], "patient_taken": []}
 
 
 def test_get_availability_requires_all_params():
@@ -104,3 +106,67 @@ def test_get_availability_normalizes_naive_datetimes_to_utc(monkeypatch):
     assert captured["start"] == datetime(2026, 8, 1, tzinfo=timezone.utc)
     assert captured["end"] == datetime(2026, 8, 2, tzinfo=timezone.utc)
     assert captured["start"].tzinfo is not None
+
+
+# --- FR-15b(2026-07-28 chore): 환자 축 사전 표시 -----------------------------------
+# 006 부분 유니크 인덱스가 만든 새 거부 클래스는 의사 축 조회로는 보이지 않는다 —
+# patient_id 를 주면 그 환자가 이미 잡은 활성 슬롯을 함께 돌려줘 슬롯 피커가 제출 전에 막는다.
+
+
+def test_get_availability_includes_patient_taken(monkeypatch):
+    # 의사 축·환자 축을 각각 다른 db 함수가 채우고, 응답에 둘 다 실린다.
+    doctor_taken = [datetime(2026, 8, 1, 0, 30, tzinfo=timezone.utc)]
+    patient_taken = [datetime(2026, 8, 1, 3, 0, tzinfo=timezone.utc)]
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        availability_db, "select_taken_slots", lambda doctor_id, start, end: doctor_taken
+    )
+
+    def fake_patient_select(patient_id, start, end):
+        captured["patient_id"] = patient_id
+        return patient_taken
+
+    monkeypatch.setattr(availability_db, "select_patient_taken_slots", fake_patient_select)
+
+    client = TestClient(app)
+    resp = client.get(
+        "/availability",
+        params={
+            "doctor_id": 3,
+            "patient_id": 2,
+            "start": "2026-08-01T00:00:00Z",
+            "end": "2026-08-02T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert captured["patient_id"] == 2
+    # 두 축은 섞이지 않는다 — taken 의 기존 의미(그 의사가 찼다)를 보존해야 기존 소비자가 회귀 없다.
+    assert len(data["taken"]) == 1
+    assert len(data["patient_taken"]) == 1
+    assert data["patient_taken"][0].startswith("2026-08-01T03:00")
+
+
+def test_get_availability_without_patient_id_skips_patient_query(monkeypatch):
+    # patient_id 가 없으면 환자 축 조회를 아예 하지 않는다(불필요한 왕복 금지 + 기존 계약 보존).
+    monkeypatch.setattr(availability_db, "select_taken_slots", lambda doctor_id, start, end: [])
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("patient_id 가 없으면 환자 축 db 를 건드리면 안 돼요.")
+
+    monkeypatch.setattr(availability_db, "select_patient_taken_slots", _fail)
+
+    client = TestClient(app)
+    resp = client.get(
+        "/availability",
+        params={
+            "doctor_id": 3,
+            "start": "2026-08-01T00:00:00Z",
+            "end": "2026-08-02T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["patient_taken"] == []
