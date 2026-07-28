@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-28 # 5-3 스코프 재정의(correct-course, walk-in 전용 경로 철회) + 구현 완료 → review. Epic 5 마지막 스토리
+last_updated: 2026-07-28 # 5-3 스코프 재정의(correct-course, walk-in 전용 경로 철회) + 구현 + 코드리뷰 반영 완료 → review(릴리스 게이트 대기). Epic 5 마지막 스토리
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -86,7 +86,7 @@ development_status:
   # 2026-07-28 correct-course: 키 rename `5-3-walk-in-즉시-진료` → `5-3-대리예약-walk-in-흡수`.
   # walk-in 전용 경로(예약 없이 appointment_id null 기록) 철회 — 5.2 자동 배정 + 6.3 대리 예약이 흡수.
   # 사유·트레이드오프·명시적 미이행 목록은 planning-artifacts/sprint-change-proposal-2026-07-28.md 가 정본.
-  5-3-대리예약-walk-in-흡수: review # 구현 완료 — 백엔드 diff 0 · 프런트 1파일(proxy-booking-dialog): 의사 "자동 배정" + "가장 빠른 시간". pytest 126·lint/build 그린·curl 6종·브라우저 4시나리오(교집합·시간경과·전환잔상·재열림)·검증 예약 72–79 원복
+  5-3-대리예약-walk-in-흡수: review # 구현+코드리뷰 반영 완료, 릴리스 게이트만 남음. 백엔드 diff 0 · 프런트 1파일(proxy-booking-dialog): 의사 "자동 배정" + "가장 빠른 시간". 4층 리뷰 Patch 13·Defer 3·Dismiss 2 전부 처리. pytest 126·ruff 0·lint/build 그린·curl 6종·브라우저 실측 2회(초기+패치후)·검증 예약 전량 원복
   epic-5-retrospective: optional
 
   # Epic 6: 역할 3분화 & 의사 대시보드 & 직원 셸 (P0.5 — 번호는 6이나 실행 순서는 Epic 4 done 후·Epic 5 전, correct-course 2026-07-25)
