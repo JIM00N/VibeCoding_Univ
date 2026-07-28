@@ -4,7 +4,7 @@ baseline_commit: 7a07d32
 
 # Story 5.3: 대리 예약의 walk-in 흡수 (자동 배정 + 가장 빠른 시간)
 
-Status: review
+Status: done
 
 > 🚧 **착수 게이트: 열림.** 선행 5.1(가용성 엔진)·5.4(사본 정리)·5.2(자동 배정) 전부 done(2026-07-27, 커밋+배포+라이브). 이 스토리는 **5.2가 서버에 이미 넣어둔 자동 배정을 직원 화면에 배선하는 것**이 전부다 — 백엔드는 1바이트도 건드리지 않는다.
 >
@@ -101,11 +101,15 @@ so that walk-in 환자도 기존 환자와 같은 흐름(등록 → 예약 → �
   - [x] **검증 데이터 원복(최우선 금기)**: 예약 **72–79 (8건)** id 지정 삭제(uv+psycopg) → 잔여 `[22, 40, 41, 68, 69]`. `medical_record` 는 생성도 삭제도 없음(총 2행 불변 — 이 스토리는 기록을 만들지 않는다). 시드 재실행 없음. ⚠️ 68·69 는 이 세션 시작 전부터 존재(첫 생성이 72) — 남의 데이터라 보존.
   - [x] `deferred-work.md` 갱신 — "알려진 사본(사전 트리아지)" 2건 기록.
 
-- [ ] **Task 6 — 마감: 커밋 + 배포 + 라이브 확인**
-  - [ ] `Story 5.3:` 한국어 커밋 → **Codex 사전 리뷰(필수)** + `/bmad-code-review` 3층 → 트리아지 → Patch 반영 커밋. **폼·상태 스토리라 리뷰 예산 상향**(Epic 6 회고 액션 #3) — 리뷰어에게 High 후보를 명시 지목: "교집합 계산 오류로 가능 슬롯이 taken 표시" · "[가장 빠른 시간]이 지난/점유 슬롯 선택" · "자동↔직접 전환 시 stale taken" · "직접 선택 흐름 회귀".
-  - [ ] 로컬 서버(:8000 + :3000) 기동 → PR 생성 → **사용자 승인 후 머지**(merge commit).
-  - [ ] Vercel 자동 배포(Railway 도 push 로 재배포되지만 백엔드 코드가 동일해 동작 변화 0 — 성공 여부만 확인) → **라이브 실측**(신규 번들 "자동 배정" 옵션·[가장 빠른 시간]·교집합 taken·409 문구, 콘솔 신규 에러 0) → 검증 데이터 SQL 원복 → 스토리 Status·sprint-status `5-3` → done, main 에 done 커밋·push → 서버 종료.
-  - [ ] **Epic 5 종료** — 5.1·5.2·5.3·5.4 전부 done 이면 `epic-5: done` + `/bmad-retrospective`(액션 항목을 sprint-status 에 반영).
+- [x] **Task 6 — 마감: 커밋 + 배포 + 라이브 확인**
+  - [x] `Story 5.3:` 한국어 커밋 → **Codex 사전 리뷰(필수)** + `/bmad-code-review` 3층 → 트리아지 → Patch 반영 커밋. **폼·상태 스토리라 리뷰 예산 상향**(Epic 6 회고 액션 #3) — 리뷰어에게 High 후보를 명시 지목: "교집합 계산 오류로 가능 슬롯이 taken 표시" · "[가장 빠른 시간]이 지난/점유 슬롯 선택" · "자동↔직접 전환 시 stale taken" · "직접 선택 흐름 회귀".
+  - [x] 로컬 서버(:8000 + :3000) 기동 → PR 생성 → **사용자 승인 후 머지**(merge commit) — PR #27 머지 `34d2a4a`(2026-07-28 16:17 KST).
+  - [x] Vercel 자동 배포(Railway 도 push 로 재배포되지만 백엔드 코드가 동일해 동작 변화 0 — 성공 여부만 확인) → **라이브 실측** → 검증 데이터 SQL 원복 → 스토리 Status·sprint-status `5-3` → done, main 에 done 커밋·push → 서버 종료.
+    - Railway `/health` **200** · Vercel `/staff/appointments` **200**(신규 번들).
+    - **교집합 실증용 라이브 시드**: `POST /appointments` 로 7/29 10:00 KST 에 김민재(3)·박서연(4) 점유 → **id 116·117 (201)**. 같은 슬롯 자동 배정(`doctor_id` 생략) → **409 "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."** (AC2 거부 문구 라이브 실증).
+    - **브라우저 실측**(Playwright 390×844, 라이브 Vercel): 의사 옵션 `["자동 배정","김민재 선생님","박서연 선생님"]` — **"자동 배정" 첫 항목**(AC1) · 트리거 라벨 "자동 배정" · 캡션 "고른 시간에 비어 있는 선생님이 자동으로 배정돼요." · `aria-describedby=proxy-doctor-auto-hint` → **교집합 렌더 증명**(AC2): 10:00 = `예약됨` disabled(전원 점유) / 09:00·09:30·10:30 = `예약 가능` → **[가장 빠른 시간] → 09:00 선택**(AC3) → 요약 `role=status` = "📅 7월 29일 (수) 09:00 · 이비인후과 · **자동 배정** · 박지훈님 (#2)"(AC4) → 격자 18칸 · **가로 오버플로 0px** · **콘솔 에러 0건**. 제출은 하지 않음(라이브 쓰기 최소화).
+    - **검증 데이터 원복(최우선 금기)**: 예약 **116·117** id 지정 삭제 → 잔여 `[22, 40, 41, 68, 69]` = 검증 전과 동일. `medical_record` 2 · `prescription` 3 · `patient` 3 전부 불변. 시드 재실행 없음.
+  - [x] **Epic 5 종료** — 5.1·5.2·5.3·5.4 전부 done → `epic-5: done` + `/bmad-retrospective`(액션 항목을 sprint-status 에 반영).
 
 ### Review Findings (2026-07-28)
 
@@ -299,3 +303,6 @@ claude-opus-5 (Claude Code, dev-story)
 | 날짜 | 작성 | 내용 |
 |------|------|------|
 | 2026-07-28 | create-story | 스토리 파일 생성(backlog → ready-for-dev). **스코프 재정의** — 사용자 제기("환자등록·대리예약이 있는데 워크인을 따로 처리해야 하는지 의문")로 walk-in 전용 경로를 철회하고 대리 예약이 흡수하는 안을 승인·채택(`sprint-change-proposal-2026-07-28.md`, epics.md FR-16·Epic 5·Story 5.3 반영). 결과: 백엔드 diff 0 · 신규 파일 0 · 프런트 1파일. 구현 결정 3건: ① `AUTO_DOCTOR` 로컬 상수(무해 사본) ② 교집합은 `patient/book` 에서 이식(공유 추출은 승인 범위 밖 — deferred 사전 트리아지) ③ "가장 빠른 시간"은 명시 버튼(자동 선택은 기존 전화 예약 흐름 오선택 위험). 회고 액션 #1(시간 경과·같은 값 재선택 + 재열림 신선도 4종 실측)·#2(mount lifetime 무변경 결정)·#3(리뷰 예산 상향·High 후보 지목) 반영. |
+| 2026-07-28 | dev | 구현 완료(Task 1–5) → review. 백엔드 diff **0바이트** · 프런트 **1파일**(`proxy-booking-dialog.tsx`). pytest **126** · ruff 0 · lint/build 그린 · curl 실증 6종 · 브라우저 실측(1280×900 + 390×844, 회고 액션 시나리오 4종 포함). 검증 예약 72–79 원복. |
+| 2026-07-28 | code-review | 4층 병렬 리뷰(Codex · Blind Hunter · Edge Case Hunter · Acceptance Auditor) → **Patch 13 · Defer 3 · Dismiss 2**. Patch 13 = 새 버튼이 만든 조합 8건(`slotErr` 잔존 · 의사 미선택 클릭 · mid-flight 클릭 · 막다른 길 stale 선택 · 의사 로드 실패 시 자동 배정 단독 노출 · 문구 이중 렌더 · 성공 분기 SR 무음 · catch 주석) + correct-course 문서 잔재 5건(`.claude/rules/backend.md` · `EXPERIENCE.md` ×2 · `DESIGN.md` · `epics.md` FR-16). Defer 3건 `deferred-work.md` 기록. |
+| 2026-07-28 | dev | **릴리스 게이트 마감 → done.** PR #27 머지(`34d2a4a`) → Vercel·Railway 배포 → **라이브 실측**: Railway `/health` 200 · Vercel 신규 번들에 "자동 배정" 첫 항목·[가장 빠른 시간]·교집합 taken(10:00 예약됨 / 10:30 예약 가능) 전부 확인 · 자동 배정 409 문구 실증 · 콘솔 0 · 390×844 오버플로 0. 검증 예약 116·117 원복(잔여 `[22,40,41,68,69]` 불변). **Epic 5 종료** — 5.1·5.2·5.3·5.4 전부 done. |
