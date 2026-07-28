@@ -130,3 +130,8 @@
 
 - **`allowedDevOrigins` 의 LAN IP 하드코딩** — 브라우저 실측(Chrome 확장이 `localhost` 탐색을 막아 LAN IP 로 접속)을 위해 `next.config.ts` 에 `allowedDevOrigins: ["192.168.0.13"]` 을 추가했다(Next 16 은 미등록 교차 오리진의 dev 접근을 차단해 하이드레이션이 멈춘다 — 실측 중 실증). dev 전용·프로덕션 빌드 무영향이나 IP 가 DHCP 로 바뀌면 갱신 필요. 다른 환경에서 실측할 일이 생기면 환경셋업.md 에 절차(백엔드 `--host 0.0.0.0` + CORS 오리진 임시 추가 + `NEXT_PUBLIC_API_BASE_URL` 임시 지정 포함)로 승격. [frontend/next.config.ts]
 - **가용성 사전 조회의 폴링 없음(의도)** — 환자 예약 화면은 라우트 상주형이라 taken 표시가 조회 시점 스냅샷이다(다이얼로그는 열 때 remount 라 신선). 주기적 폴링은 YAGNI 로 두지 않았고, 제출 시 서버 게이트(400/409)가 최종 방어 + 409 시 재조회로 동기화한다(스토리 mount lifetime 설계 결정). 실시간성 요구가 생기면 폴링/refetch-on-focus 검토. [frontend/app/patient/book/page.tsx]
+
+## Deferred from: code review of chore/patient-slot-guard — FR-15b 환자 축 (2026-07-28)
+
+- **`update_appointment_status` 에 `UniqueViolation` 핸들러 없음** — 006 부분 유니크 인덱스가 생기면서 status UPDATE 도 원리상 인덱스를 건드릴 수 있게 됐다. 지금은 도달 불가다: `_ALLOWED_SOURCE` 가 완료·취소를 ('대기','확정') 으로 되돌리지 않아 인덱스 술어에 재진입할 경로가 없다. 즉 안전성이 **전이표에 대한 암묵적 의존**으로만 성립하고, 전이표에도 마이그레이션에도 그 의존이 기록돼 있지 않다. "예약 되살리기"(취소→대기) 같은 기능이 생기는 순간, 그 사이 환자가 같은 슬롯을 재예약했다면 raw psycopg `UniqueViolation` 이 서비스를 뚫고 나가 영어 DB 문자열 500 이 된다(AD-10 위반). 처리 시: 전이표 주석에 인덱스 의존 명시 + 되살리기 도입 시 409 매핑 추가. [backend/app/services/appointments.py:227-233, db/migrations/006_uq_patient_slot.sql]
+- **`완료` 전이가 환자 축 불변식을 새게 한다** — 006 은 술어가 `status in ('대기','확정')` 이라 완료된 예약은 키에서 빠진다. `medical_records` 의 기록 생성은 `reserved_at` 이 미래인지 보지 않으므로, 미래 예약을 미리 완료 처리하면 그 환자가 **같은 미래 슬롯을 다른 의사로 다시 예약**할 수 있다. 마이그레이션 헤더의 "사람은 같은 시각에 두 진료를 받을 수 없다"는 이 경로에서 성립하지 않는다. 데모에서 미래 예약을 앞당겨 완료할 이유가 없어 보류. 처리 시: 술어에 완료를 포함할지(과거 슬롯 재예약을 막게 됨 — 과거 시각 가드와 중복) 또는 기록 생성에 "예약 시각 도래" 가드를 넣을지 결정 필요. [db/migrations/006_uq_patient_slot.sql:26, backend/app/services/medical_records.py]

@@ -1176,3 +1176,117 @@ def test_create_appointment_auto_unknown_patient_fk_maps_to_400(monkeypatch):
 
     assert resp.status_code == 400
     assert resp.json()["detail"] == "선택한 환자 정보를 찾을 수 없어요. 환자를 다시 선택해 주세요."
+
+
+# --- chore(2026-07-28): 환자 1인 동시 예약 금지 (부분 유니크 인덱스 → 409) -----------
+# 실 보증은 db/migrations/006 의 인덱스 + curl 실증이 담당한다 — 아래 두 테스트는 db 를
+# monkeypatch 하므로 "UniqueViolation 이 올라오면 409 한국어로 매핑되는가"만 고정한다
+# (계약 테스트의 한계는 .claude/rules/backend.md 참조).
+
+
+def test_create_appointment_patient_slot_conflict_returns_409(monkeypatch):
+    # 같은 환자가 같은 슬롯에 다른 의사로 재예약 → 006 인덱스가 UniqueViolation.
+    # 전역 500 이 아니라 409 한국어여야 하고, 기존 세 409 와 문구로 구분돼야 한다.
+    from psycopg.errors import UniqueViolation
+
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+
+    def dup_insert(*args, **kwargs):
+        raise UniqueViolation(
+            'duplicate key value violates unique constraint "uq_appointment_patient_slot"'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment", dup_insert)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": 4,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    # 문구가 주어("이 환자는")를 밝혀야 한다 — 직원이 "의사가 찼다"로 읽으면 의사를 바꿔
+    # 재시도하고 또 실패한다(코드리뷰 High).
+    assert detail == "이 환자는 그 시간에 이미 다른 예약이 있어요. 다른 시간을 골라 주세요."
+    # 슬롯 관련 기존 409 **셋 모두**와 달라야 한다(코드리뷰: 이전엔 셋 중 둘만 비교했다).
+    assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+
+
+def test_create_appointment_auto_patient_slot_conflict_returns_409(monkeypatch):
+    # 자동 배정도 같은 매핑이어야 한다 — pick 은 "그 의사가 빈가"만 보므로 환자 중복은
+    # 인덱스가 잡는다(직접 선택 경로 테스트의 자동판, FK 매핑 쌍과 같은 구조).
+    from psycopg.errors import UniqueViolation
+
+    monkeypatch.setattr(refdata_db, "fetch_doctors", lambda hd: [{"id": 3}, {"id": 4}])
+
+    def dup_auto(*args, **kwargs):
+        raise UniqueViolation(
+            'duplicate key value violates unique constraint "uq_appointment_patient_slot"'
+        )
+
+    monkeypatch.setattr(appointments_db, "insert_appointment_auto", dup_auto)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/appointments",
+        json={
+            "patient_id": 1,
+            "hospital_department_id": 2,
+            "doctor_id": None,
+            "reserved_at": _future_iso(10, 0),
+        },
+    )
+
+    assert resp.status_code == 409
+    assert (
+        resp.json()["detail"]
+        == "이 환자는 그 시간에 이미 다른 예약이 있어요. 다른 시간을 골라 주세요."
+    )
+
+
+def test_create_appointment_foreign_unique_violation_is_not_patient_409(monkeypatch):
+    # 코드리뷰 High: 매핑이 제약 이름을 안 보면, deferred-work.md:127 이 예정한
+    # (doctor_id, reserved_at) 부분 유니크가 들어오는 순간 **의사 충돌이 환자 문구**로 나간다.
+    # 다른 제약 이름의 UniqueViolation 은 환자 409 로 삼키지 말고 그대로 올라가야 한다.
+    from psycopg.errors import UniqueViolation
+
+    class _NamedUniqueViolation(UniqueViolation):
+        """diag 를 가진 UniqueViolation 테스트 더블 — 손제작 예외의 diag 는 원래 전부 None 이라
+        (deferred-work.md:60 이 기록한 함정) 이름 분기를 검증하려면 diag 를 직접 얹어야 한다."""
+
+        def __init__(self, constraint_name: str):
+            super().__init__("duplicate key value violates unique constraint")
+            self._constraint_name = constraint_name
+
+        @property
+        def diag(self):  # type: ignore[override]
+            from types import SimpleNamespace
+
+            return SimpleNamespace(constraint_name=self._constraint_name)
+
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+
+    def other_unique(*args, **kwargs):
+        raise _NamedUniqueViolation("uq_appointment_doctor_slot")
+
+    monkeypatch.setattr(appointments_db, "insert_appointment", other_unique)
+
+    client = TestClient(app)
+    with pytest.raises(UniqueViolation):
+        client.post(
+            "/appointments",
+            json={
+                "patient_id": 1,
+                "hospital_department_id": 2,
+                "doctor_id": 4,
+                "reserved_at": _future_iso(10, 0),
+            },
+        )

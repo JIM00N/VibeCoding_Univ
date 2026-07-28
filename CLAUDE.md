@@ -51,7 +51,7 @@ npm run build
 - 에픽·AC·횡단 규약: `_bmad-output/planning-artifacts/epics.md`
 - UX 결정(UX-DR*): `_bmad-output/planning-artifacts/ux-designs/ux-hospital-care-2026-07-13/DESIGN.md`
 - 스토리 명세·진행: `_bmad-output/implementation-artifacts/` (`sprint-status.yaml`이 상태 추적)
-- DB 스키마 기준: 1-1 스토리 파일의 "실측 DB 스키마" 표 — base CREATE TABLE은 레포에 없음(라이브가 기준). 마이그레이션은 `db/migrations/` 001→002→003→005 순(004번은 시드가 차지)
+- DB 스키마 기준: 1-1 스토리 파일의 "실측 DB 스키마" 표 — base CREATE TABLE은 레포에 없음(라이브가 기준). 마이그레이션은 `db/migrations/` 001→002→003→005→006 순(004번은 시드가 차지). 006(환자 1인 동시 예약 금지)은 **선행 정리 필요** — 기존 위반 행이 있으면 인덱스 생성이 실패한다(파일 헤더에 탐지 SQL)
 
 ## 최우선 금기
 

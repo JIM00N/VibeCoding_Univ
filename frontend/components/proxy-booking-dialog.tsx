@@ -112,6 +112,9 @@ export function ProxyBookingDialog({
 
   // 점유 슬롯(epoch ms, Story 5.1) — null 이면 미조회/조회 실패(taken 없이 렌더). nonce 는 409 후 재조회.
   const [takenMs, setTakenMs] = useState<ReadonlySet<number> | null>(null);
+  // 환자 축(FR-15b) — 고른 환자가 이미 잡은 활성 슬롯. takenMs 와 분리해 둔다(의사 변경이
+  // 이 축을 지우면 안 되고, 두 축을 섞으면 자동 배정의 의사 교집합 계산이 망가진다).
+  const [patientBusyMs, setPatientBusyMs] = useState<ReadonlySet<number>>(new Set());
   const [availabilityNonce, setAvailabilityNonce] = useState(0);
   // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(리뷰 P8).
   const selectedIsoRef = useRef<string | null>(null);
@@ -153,10 +156,16 @@ export function ProxyBookingDialog({
   const dayLabel = useMemo(() => formatSeoulDayLabel(effectiveYmd), [effectiveYmd]);
   // 남은 슬롯이 전부 점유된 막다른 길 — 격자 아래 안내 문단과 [가장 빠른 시간] 실패 분기가 공유한다.
   // 한 벌로 두는 이유(코드리뷰): 둘이 각자 판정하면 같은 문장이 회색 status·빨강 alert 로 두 번 뜬다.
+  // 실제로 막아야 할 집합 = 의사 축 ∪ 환자 축(FR-15b). 상태는 분리, 합치기는 렌더 시점에만.
+  const unavailableMs = useMemo(() => {
+    if (takenMs === null && patientBusyMs.size === 0) return undefined;
+    return new Set([...(takenMs ?? []), ...patientBusyMs]);
+  }, [takenMs, patientBusyMs]);
+
   const allSlotsTaken =
     slots.length > 0 &&
-    takenMs !== null &&
-    slots.every((s) => takenMs.has(new Date(s.iso).getTime()));
+    unavailableMs !== undefined &&
+    slots.every((s) => unavailableMs.has(new Date(s.iso).getTime()));
 
   // 진료과 로드 — 열렸을 때 1회. 닫힌 채 마운트돼 있으므로 마운트 시점에 네트워크를 때리지 않는다.
   // 다른 로더와 같은 cancelled 가드를 둔다(늦게 도착한 실패가 성공 위에 오류를 덮어쓰지 않게).
@@ -237,7 +246,7 @@ export function ProxyBookingDialog({
   // 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
   // stale taken 비우기는 진료과·의사·날짜 변경 핸들러·resetForm 이 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
-    if (!open || !doctorId) return;
+    if (!open || !doctorId || !patient) return;
     // 자동 배정인데 의사 목록이 비어 있으면 조회를 생략한다. 이 가드의 도달 경로는 과도기가 아니라
     // **지속 상태**다 — 진료과 전환 직후는 handleDeptChange 가 doctorId 를 먼저 null 로 만들어 윗줄
     // 가드에서 이미 끊기고, 여기 오는 경우는 의사 로드 실패(doctors 가 null 인 채 Select 가 다시
@@ -257,13 +266,18 @@ export function ProxyBookingDialog({
     const nextTaken: Promise<Set<number>> =
       doctorId === AUTO_DOCTOR
         ? Promise.all(
-            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso)),
+            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso, patient.id)),
           ).then((avs) => {
+            // 환자 축은 의사와 무관해 어느 응답이나 같다 — 첫 응답에서 취한다.
+            setPatientBusyMs(toMsSet(avs[0].patient_taken));
             const sets = avs.map((av) => toMsSet(av.taken));
             // 교집합 — 모든 의사의 taken 에 공통인 슬롯만. sets 는 위 가드로 비지 않는다.
             return new Set([...sets[0]].filter((ms) => sets.every((s) => s.has(ms))));
           })
-        : api.getAvailability(Number(doctorId), startIso, endIso).then((av) => toMsSet(av.taken));
+        : api.getAvailability(Number(doctorId), startIso, endIso, patient.id).then((av) => {
+            setPatientBusyMs(toMsSet(av.patient_taken));
+            return toMsSet(av.taken);
+          });
     nextTaken
       .then((next) => {
         if (cancelled) return;
@@ -286,7 +300,7 @@ export function ProxyBookingDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, doctorId, doctors, effectiveYmd, availabilityNonce]);
+  }, [open, doctorId, doctors, effectiveYmd, availabilityNonce, patient]);
 
   // base-ui Select 계약: Root 에 items 를 넘겨야 SelectValue 라벨이 렌더된다(2.1·2.3이 겪은 함정).
   const deptItems = useMemo(
@@ -328,6 +342,7 @@ export function ProxyBookingDialog({
     setSelectedYmd(null);
     setSelectedIso(null);
     setTakenMs(null);
+    setPatientBusyMs(new Set());
     setPatientErr(null);
     setDeptErr(null);
     setDoctorErr(null);
@@ -347,6 +362,11 @@ export function ProxyBookingDialog({
   function selectPatient(p: Patient) {
     setPatient(p);
     setPatientErr(null);
+    // 환자가 바뀌면 환자 축 진실도 슬롯 오류도 전 환자 것이다(코드리뷰) — 비우고 재조회한다.
+    // 안 지우면 A 에게 뜬 "이 환자는 …" 빨간 안내가 B 화면에 그대로 남아 예약 가능한 슬롯을 막는다.
+    setPatientBusyMs(new Set());
+    setSlotErr(null);
+    setAvailabilityNonce((n) => n + 1);
   }
 
   function handleDeptChange(v: string) {
@@ -384,11 +404,14 @@ export function ProxyBookingDialog({
   //    클릭 시점의 현재 시각으로 다시 거른다 — 제출 직전 재검증과 서버 400 이 그 뒤의 방어층이다.
   // takenMs 가 null(미조회·조회 실패)이면 점유 조건은 통과 처리한다 — 시간상 첫 슬롯을 고르고 서버
   //    409 가 백스톱한다(가용성이 없다고 버튼을 막지 않는다 — 5.1 조용한 강등 규율).
+  // ⚠️ 후보 필터는 **두 축 모두** 본다(unavailableMs, FR-15b). 의사 축만 보면 그 환자가 이미
+  //    잡아 둔 슬롯을 매번 다시 골라 409 를 반복한다 — 누를 때마다 같은 칸이라 앞으로 나갈 길이
+  //    없다(코드리뷰 High). allSlotsTaken 도 같은 집합이라 "다른 날짜" 안내와 판정이 어긋나지 않는다.
   function selectEarliestFreeSlot() {
     const nowMs = new Date().getTime();
     const first = slots.find((s) => {
       const ms = new Date(s.iso).getTime();
-      return ms > nowMs && !(takenMs?.has(ms) ?? false);
+      return ms > nowMs && !(unavailableMs?.has(ms) ?? false);
     });
     if (!first) {
       // 고를 게 없다는 건 현재 선택도 지났거나 점유됐다는 뜻이다 — 형제 거부 경로(가용성 effect·제출
@@ -847,7 +870,7 @@ export function ProxyBookingDialog({
                 ariaLabelledBy={
                   slotErr ? "proxy-slot-label proxy-slot-error" : "proxy-slot-label"
                 }
-                takenMs={takenMs ?? undefined}
+                takenMs={unavailableMs}
                 onChange={(iso) => {
                   setSelectedIso(iso);
                   setSlotErr(null);

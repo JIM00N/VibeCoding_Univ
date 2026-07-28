@@ -45,12 +45,18 @@ export default function Home() {
         >
           직원
         </Button>
-        {/* 의사 역할(FR-1, Story 6.1) — 환자/직원과 구분되는 outline 톤. 의사 신원 선택으로 이어진다. */}
+        {/* 의사 역할(FR-1, Story 6.1) — 환자/직원과 구분되는 outline 톤. 의사 신원 선택으로 이어진다.
+            환자 버튼과 같은 이유로 대시보드(/doctor)가 아니라 신원 선택으로 보낸다(2026-07-28 chore):
+            저장된 신원이 있으면 "의사"를 눌러도 목록을 못 보고 그 의사로 직행했다(FR-1b "목록에서
+            본인을 고르고" 위반).
+            ⚠️ 고친 건 **이 진입점 하나**다 — /doctor 가드(app/doctor/page.tsx)는 그대로 "신원이
+            없을 때만 되돌린다". 그건 결함이 아니라 의도다: 컨텍스트 바·기록 작성 후 복귀 같은
+            "내 대시보드로" 경로는 신원이 있으면 바로 들어가야 한다. 역할 선택만 목록을 거친다. */}
         <Button
           size="lg"
           variant="outline"
           className="h-24 text-lg"
-          onClick={() => router.push("/doctor")}
+          onClick={() => router.push("/doctor/select")}
         >
           의사
         </Button>
