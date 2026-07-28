@@ -12,7 +12,14 @@
 //
 // Story 5.1(FR-15): (의사, 날짜) 선택 시 점유 슬롯을 받아 taken 셀로 그리고, 제출 충돌(409)은
 // red 인라인 + 그 셀 taken 갱신으로 처리한다(환자 예약 화면과 동일 규칙). 열 때마다 remount 라
-// 가용성도 "여는 시점" 기준으로 신선하다. walk-in 즉시 진료는 Epic 5.3.
+// 가용성도 "여는 시점" 기준으로 신선하다.
+//
+// Story 5.3(FR-16): walk-in(예약 없이 온 환자) 접수를 이 폼이 흡수한다 — 전용 화면을 만들지 않는다
+// (2026-07-28 correct-course). 어포던스 둘: ① 담당 의사 "자동 배정"(doctor_id: null 제출 → 서버가
+// 그 과의 빈 의사를 고른다, 5.2 계약 그대로) ② "가장 빠른 시간"(그 날짜의 지나지 않은 빈 슬롯 중 첫
+// 번째 선택). 자동 모드의 taken 표시는 과 의사 전원 가용성의 교집합이다(전원 점유만 막고, 한 명이라도
+// 비면 접수 가능). ⚠️ 접수는 "지금 진행 중인 슬롯"이 아니라 다음 빈 슬롯으로 잡힌다 — 5.1 과거 시각
+// 가드(서버 400)가 유지되는 의도된 한계다(스토리 경계 참조).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -49,6 +56,11 @@ import {
 } from "@/lib/api";
 import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
 import { orDash } from "@/lib/format";
+
+// 의사 Select 의 자동 배정 옵션 값(Story 5.3) — 실제 의사 id(숫자 문자열)와 절대 겹치지 않는다.
+// 환자 예약 화면(app/patient/book/page.tsx:37)과 값이 같은 의도적 사본 — 각 화면이 자기 상수를 자기
+// 상태와만 비교하므로 공유 동작이 없고, 드리프트해도 깨지지 않는다(스토리 구현 결정 1).
+const AUTO_DOCTOR = "auto";
 
 // 첫 오류 필드로 스크롤·포커스한다 — 390×844에서 아래까지 스크롤한 채 제출하면 인라인 오류가 전부
 // 화면 밖(위쪽)에 렌더돼 버튼이 먹통인 것처럼 보인다. base-ui 트리거에 ref 를 꽂는 대신 이미 있는
@@ -139,6 +151,12 @@ export function ProxyBookingDialog({
     return slotsForSeoulDay(effectiveYmd).filter((s) => new Date(s.iso).getTime() > nowMs);
   }, [effectiveYmd]);
   const dayLabel = useMemo(() => formatSeoulDayLabel(effectiveYmd), [effectiveYmd]);
+  // 남은 슬롯이 전부 점유된 막다른 길 — 격자 아래 안내 문단과 [가장 빠른 시간] 실패 분기가 공유한다.
+  // 한 벌로 두는 이유(코드리뷰): 둘이 각자 판정하면 같은 문장이 회색 status·빨강 alert 로 두 번 뜬다.
+  const allSlotsTaken =
+    slots.length > 0 &&
+    takenMs !== null &&
+    slots.every((s) => takenMs.has(new Date(s.iso).getTime()));
 
   // 진료과 로드 — 열렸을 때 1회. 닫힌 채 마운트돼 있으므로 마운트 시점에 네트워크를 때리지 않는다.
   // 다른 로더와 같은 cancelled 가드를 둔다(늦게 도착한 실패가 성공 위에 오류를 덮어쓰지 않게).
@@ -214,11 +232,17 @@ export function ProxyBookingDialog({
   }, [deptId, doctorNonce]);
 
   // (의사, 날짜)를 고르면 그 날의 점유 슬롯을 미리 받아 taken 셀로 그린다(Story 5.1, UX-DR3).
+  // 자동 배정(Story 5.3)은 과 의사 전원의 가용성을 병렬로 받아 교집합만 taken 으로 그린다.
   // 열렸을 때만 조회한다(닫힌 채 네트워크 금지 규율). 조회 실패는 치명 아님 — taken 없이 렌더하고
   // 제출 시 서버 409 가 최종 방어한다(조용한 강등, 콘솔 0 유지).
   // stale taken 비우기는 진료과·의사·날짜 변경 핸들러·resetForm 이 담당한다(effect 동기 setState 린트 금지).
   useEffect(() => {
     if (!open || !doctorId) return;
+    // 자동 배정인데 의사 목록이 비어 있으면 조회를 생략한다. 이 가드의 도달 경로는 과도기가 아니라
+    // **지속 상태**다 — 진료과 전환 직후는 handleDeptChange 가 doctorId 를 먼저 null 로 만들어 윗줄
+    // 가드에서 이미 끊기고, 여기 오는 경우는 의사 로드 실패(doctors 가 null 인 채 Select 가 다시
+    // 활성화됨)다. 이때 taken 사전 표시 없이 제출이 열리지만 서버 400/409 가 백스톱한다.
+    if (doctorId === AUTO_DOCTOR && (doctors ?? []).length === 0) return;
     let cancelled = false;
     const daySlots = slotsForSeoulDay(effectiveYmd);
     const startIso = daySlots[0].iso;
@@ -226,11 +250,23 @@ export function ProxyBookingDialog({
     const endIso = new Date(
       new Date(daySlots[daySlots.length - 1].iso).getTime() + 1_800_000,
     ).toISOString();
-    api
-      .getAvailability(Number(doctorId), startIso, endIso)
-      .then((av) => {
+    const toMsSet = (taken: string[]) => new Set(taken.map((t) => new Date(t).getTime()));
+    // 자동 배정(Story 5.3)은 그 과 의사 전원을 병렬 조회해 **교집합**만 taken 으로 본다 — 전원 점유
+    // 슬롯만 막고, 한 명이라도 비면 접수 가능하다(서버가 그 의사를 잡는다). 한 명이라도 조회에 실패하면
+    // Promise.all 이 reject 돼 아래 catch 로 흘러 이전 스냅샷이 보존된다(비치명 — 조용한 강등).
+    const nextTaken: Promise<Set<number>> =
+      doctorId === AUTO_DOCTOR
+        ? Promise.all(
+            (doctors ?? []).map((d) => api.getAvailability(d.id, startIso, endIso)),
+          ).then((avs) => {
+            const sets = avs.map((av) => toMsSet(av.taken));
+            // 교집합 — 모든 의사의 taken 에 공통인 슬롯만. sets 는 위 가드로 비지 않는다.
+            return new Set([...sets[0]].filter((ms) => sets.every((s) => s.has(ms))));
+          })
+        : api.getAvailability(Number(doctorId), startIso, endIso).then((av) => toMsSet(av.taken));
+    nextTaken
+      .then((next) => {
         if (cancelled) return;
-        const next = new Set(av.taken.map((t) => new Date(t).getTime()));
         setTakenMs(next);
         // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(리뷰 P8).
         const cur = selectedIsoRef.current;
@@ -240,13 +276,17 @@ export function ProxyBookingDialog({
         }
       })
       .catch(() => {
-        // 조회 실패 시 이전 스냅샷(409로 확인된 마킹 포함)을 보존한다 — null 리셋은 방금 확인한
-        // 충돌 셀까지 되살린다(리뷰 P3). 미조회 상태면 어차피 null(조용한 강등 유지).
+        // 조회 실패 시 이전 스냅샷을 보존한다 — null 리셋은 방금 확인한 충돌 셀까지 되살린다(리뷰 P3).
+        // ⚠️ 스냅샷이 실제로 의미 있는 건 **409 후 availabilityNonce 재조회 경로뿐**이다(그 땐 409 로
+        // 찍은 마킹이 살아 있다). 의사·진료과·날짜 변경 경로는 핸들러가 먼저 setTakenMs(null) 을 하므로
+        // 여기서 보존되는 값은 항상 null 이고, 실제 열화는 "taken 표시 없이 렌더 + 범례 소실"이다
+        // (코드리뷰 — 주석이 실패 모드를 오해시키던 것을 정정). 어느 쪽이든 제출 시 서버가 최종 방어.
+        // 자동 모드의 all-or-nothing reject 는 의도다 — 일부 의사만으로 교집합을 내면 과다 차단이 된다.
       });
     return () => {
       cancelled = true;
     };
-  }, [open, doctorId, effectiveYmd, availabilityNonce]);
+  }, [open, doctorId, doctors, effectiveYmd, availabilityNonce]);
 
   // base-ui Select 계약: Root 에 items 를 넘겨야 SelectValue 라벨이 렌더된다(2.1·2.3이 겪은 함정).
   const deptItems = useMemo(
@@ -254,7 +294,11 @@ export function ProxyBookingDialog({
     [departments],
   );
   const doctorItems = useMemo(
-    () => Object.fromEntries((doctors ?? []).map((d) => [String(d.id), `${d.name} 선생님`])),
+    () => ({
+      // 자동 배정(Story 5.3) — 트리거 라벨용. 목록 첫 항목은 SelectContent 쪽에 있다.
+      [AUTO_DOCTOR]: "자동 배정",
+      ...Object.fromEntries((doctors ?? []).map((d) => [String(d.id), `${d.name} 선생님`])),
+    }),
     [doctors],
   );
   const dateItems = useMemo(
@@ -319,6 +363,10 @@ export function ProxyBookingDialog({
     setTakenMs(null); // 이전 의사의 점유 표시가 남지 않게(새 의사 선택 시 재조회).
     setDeptErr(null);
     setDoctorErr(null);
+    // 슬롯 오류도 함께 지운다(코드리뷰) — 안 지우면 이전 의사에서 난 "예약이 모두 찼어요"가 새 과의
+    // 널널한 그리드 위에 red 로 남고, 그 오류 id 가 radiogroup 의 aria-labelledby 에도 계속 붙는다.
+    // 날짜 변경 핸들러는 원래 이걸 하고 있었다(의사·진료과만 빠져 있던 비대칭).
+    setSlotErr(null);
   }
 
   function handleDateChange(v: string) {
@@ -327,6 +375,38 @@ export function ProxyBookingDialog({
     setSelectedYmd(v);
     setSelectedIso(null);
     setTakenMs(null); // 이전 날짜의 점유 표시가 새 날짜에 비치지 않게(effect 가 재조회).
+    setSlotErr(null);
+  }
+
+  // walk-in 접수(Story 5.3) — 그 날짜의 "아직 지나지 않았고 점유되지 않은" 첫 슬롯을 고른다.
+  // ⚠️ 지난 슬롯 판정을 `slots` 메모에만 맡기지 않는다: 메모는 마운트(=여는) 시각 기준이라 다이얼로그를
+  //    열어둔 채 슬롯 경계를 넘기면 이미 지난 칸을 고르게 된다(Epic 6 회고 액션 #1 "시간 경과").
+  //    클릭 시점의 현재 시각으로 다시 거른다 — 제출 직전 재검증과 서버 400 이 그 뒤의 방어층이다.
+  // takenMs 가 null(미조회·조회 실패)이면 점유 조건은 통과 처리한다 — 시간상 첫 슬롯을 고르고 서버
+  //    409 가 백스톱한다(가용성이 없다고 버튼을 막지 않는다 — 5.1 조용한 강등 규율).
+  function selectEarliestFreeSlot() {
+    const nowMs = new Date().getTime();
+    const first = slots.find((s) => {
+      const ms = new Date(s.iso).getTime();
+      return ms > nowMs && !(takenMs?.has(ms) ?? false);
+    });
+    if (!first) {
+      // 고를 게 없다는 건 현재 선택도 지났거나 점유됐다는 뜻이다 — 형제 거부 경로(가용성 effect·제출
+      // 재검증)처럼 선택을 함께 해제한다(코드리뷰). 안 지우면 red "시간이 없어요" 와 요약 블록의
+      // 시각이 동시에 떠 서로 모순된다.
+      setSelectedIso(null);
+      // 남은 시간이 아예 없는 것과 전부 점유된 것을 구분해 안내한다(막다른 길에서 다음 행동 제시).
+      // 단 격자 아래 안내 문단이 이미 같은 문장을 띄우고 있으면(allSlotsTaken) 중복 렌더·중복 announce
+      // 가 되므로 생략한다(코드리뷰).
+      const anyFuture = slots.some((s) => new Date(s.iso).getTime() > nowMs);
+      if (anyFuture) {
+        if (!allSlotsTaken) setSlotErr("이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.");
+      } else {
+        setSlotErr("이 날짜엔 예약 가능한 시간이 없어요. 다른 날짜를 골라 주세요.");
+      }
+      return;
+    }
+    setSelectedIso(first.iso);
     setSlotErr(null);
   }
 
@@ -373,12 +453,19 @@ export function ProxyBookingDialog({
       const appt = await api.createAppointment({
         patient_id: patient.id,
         hospital_department_id: Number(deptId),
-        doctor_id: Number(doctorId),
+        // 자동 배정(Story 5.3)은 null — 서버가 그 진료과의 빈 의사를 골라 응답에 채워 준다(5.2 계약).
+        doctor_id: doctorId === AUTO_DOCTOR ? null : Number(doctorId),
         reserved_at: selectedIso,
       });
       onCreated(appt);
       // 생성 직후 status 는 대기다 — "확정"이라 하지 않는다(UX-DR10 정직). 직원 톤이라 간결하게.
-      toast.success(`${appt.patient_name}님 예약을 만들었어요. 상태는 '대기'로 시작해요.`);
+      // 자동 배정(Story 5.3)일 때만 누가 배정됐는지 알려준다 — 직원이 고르지 않았으니 결과를 봐야 한다.
+      // 직접 선택 모드의 문구는 바이트 무변경(회귀 0).
+      toast.success(
+        doctorId === AUTO_DOCTOR
+          ? `${appt.patient_name}님 예약을 만들었어요. ${appt.doctor_name ?? "담당 의사"} 선생님으로 배정됐어요. 상태는 '대기'로 시작해요.`
+          : `${appt.patient_name}님 예약을 만들었어요. 상태는 '대기'로 시작해요.`,
+      );
       submittingRef.current = false;
       resetForm();
       onOpenChange(false);
@@ -406,6 +493,10 @@ export function ProxyBookingDialog({
 
   const deptName = departments?.find((d) => String(d.id) === deptId)?.name ?? null;
   const doctorName = doctors?.find((d) => String(d.id) === doctorId)?.name ?? null;
+  // 요약 블록 공용 라벨 — 자동 배정 모드에서도 요약이 렌더되게 한다(Story 5.3). "선생님"을 라벨 안에
+  // 넣는다: 밖에 두면 자동 모드에서 "자동 배정 선생님"이 된다.
+  const doctorLabel =
+    doctorId === AUTO_DOCTOR ? "자동 배정" : doctorName ? `${doctorName} 선생님` : null;
   const slotLabel = slots.find((s) => s.iso === selectedIso)?.label ?? null;
 
   return (
@@ -603,6 +694,8 @@ export function ProxyBookingDialog({
                 // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(리뷰 P2 — false-block 방향은
                 // 서버 백스톱이 없다). 새 응답이 오면 effect 가 다시 채운다.
                 setTakenMs(null);
+                // 이전 의사 기준의 슬롯 오류도 함께 지운다(코드리뷰 — handleDeptChange 와 동일 이유).
+                setSlotErr(null);
               }}
               disabled={!deptId || doctorsLoading || doctorsEmpty}
             >
@@ -611,11 +704,14 @@ export function ProxyBookingDialog({
                 className="w-full"
                 aria-invalid={doctorErr ? true : undefined}
                 aria-describedby={
+                  // 오류문 우선, 자동 배정 선택 시엔 안내 캡션을 연결(SR 에도 동작 설명 전달 — 5.2 선례).
                   doctorErr
                     ? "proxy-doctor-error"
-                    : doctorsEmpty
-                      ? "proxy-doctor-empty"
-                      : undefined
+                    : doctorId === AUTO_DOCTOR
+                      ? "proxy-doctor-auto-hint"
+                      : doctorsEmpty
+                        ? "proxy-doctor-empty"
+                        : undefined
                 }
               >
                 <SelectValue
@@ -631,6 +727,15 @@ export function ProxyBookingDialog({
                 />
               </SelectTrigger>
               <SelectContent>
+                {/* 자동 배정 — 의사 목록이 실제로 있을 때만 첫 항목으로 노출한다(코드리뷰).
+                    로드 실패(doctors=null)면 doctorsEmpty 가 false 라 Select 가 활성인데, 이 항목을
+                    무조건 렌더하면 "자동 배정"만 있는 드롭다운이 되어 앱이 **가용성 무지 상태를 권유**
+                    하게 된다(가용성 effect 가 조기 return → 전 셀이 예약 가능으로 칠해지고 범례도 소실).
+                    5.3 이전엔 항목이 0개라 아무것도 커밋할 수 없었다 — 그 성질을 되돌린다.
+                    부수 효과로 "doctors 가 [] 로 바뀌며 auto 가 잠기는" 막다른 길도 도달 불가가 된다. */}
+                {(doctors ?? []).length > 0 && (
+                  <SelectItem value={AUTO_DOCTOR}>자동 배정</SelectItem>
+                )}
                 {(doctors ?? []).map((doc) => (
                   <SelectItem key={doc.id} value={String(doc.id)}>
                     {doc.name} 선생님
@@ -638,6 +743,11 @@ export function ProxyBookingDialog({
                 ))}
               </SelectContent>
             </Select>
+            {doctorId === AUTO_DOCTOR && !doctorErr && (
+              <p id="proxy-doctor-auto-hint" className="text-xs text-muted-foreground">
+                고른 시간에 비어 있는 선생님이 자동으로 배정돼요.
+              </p>
+            )}
             {doctorLoadError && (
               <div className="flex items-center justify-between gap-2">
                 <p role="alert" className="text-sm text-destructive">
@@ -693,14 +803,36 @@ export function ProxyBookingDialog({
 
           {/* 30분 슬롯 피커 (필수) — 2.1과 같은 컴포넌트. Story 5.1: taken(예약됨) 3상태. */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-baseline justify-between gap-2">
+            {/* 버튼이 붙어 390px 에서 한 줄에 안 들어가므로 wrap 을 허용한다(라벨은 항상 첫 줄). */}
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               {/* radiogroup 은 form control 이 아니라 htmlFor 대신 id + aria-labelledby 로 연결한다.
                   <label> 이 아니라 <span> 인 이유: htmlFor 없는 <label> 은 짝이 없어 Chrome a11y 이슈
                   ("No label associated with a form field")로 잡힌다. 타이포는 Label 과 동일하게 맞춘다. */}
               <span id="proxy-slot-label" className="text-sm leading-none font-medium">
                 시간 선택 (30분 단위) <span className="text-destructive">*</span>
               </span>
-              <span className="truncate text-xs text-muted-foreground">{dayLabel}</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-xs text-muted-foreground">{dayLabel}</span>
+                {/* walk-in 접수 지름길(Story 5.3) — 격자가 있을 때만 노출한다(슬롯 0개면 격자 대신
+                    안내 문단이 렌더되므로 고를 대상이 없다).
+                    ⚠️ 의사 선택 전에는 비활성(코드리뷰): "빈 시간"은 의사가 정해져야 성립하는 개념이라,
+                    takenMs 가 없는 상태에서 고르면 나중에 가용성이 도착했을 때 "고른 시간이 그새
+                    예약됐어요"라는 **거짓 사유**로 선택이 해제된다(처음부터 차 있었던 것).
+                    제출 중에도 비활성 — mid-flight 클릭은 409 catch 의 stale 클로저가 삼켜서
+                    엉뚱한 셀을 taken 으로 찍는다. */}
+                {slots.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={selectEarliestFreeSlot}
+                    disabled={!doctorId || submitting}
+                  >
+                    가장 빠른 시간
+                  </Button>
+                )}
+              </div>
             </div>
             {slots.length === 0 ? (
               <p className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
@@ -722,10 +854,9 @@ export function ProxyBookingDialog({
                 }}
               />
             )}
-            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분. */}
-            {slots.length > 0 &&
-              takenMs !== null &&
-              slots.every((s) => takenMs.has(new Date(s.iso).getTime())) && (
+            {/* 남은 슬롯이 전부 점유됐을 때의 막다른 길 안내(AC5) — 슬롯 0개(시간 지남)와 구분.
+                판정은 allSlotsTaken 한 벌([가장 빠른 시간] 실패 분기와 공유 — 중복 문구 방지). */}
+            {allSlotsTaken && (
                 <p role="status" className="text-sm text-muted-foreground">
                   이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
                 </p>
@@ -737,10 +868,16 @@ export function ProxyBookingDialog({
             )}
           </div>
 
-          {/* 요약 — 모두 골랐을 때 확인용 */}
-          {patient && deptName && doctorName && slotLabel && (
-            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
-              📅 <b>{dayLabel} {slotLabel}</b> · {deptName} · {doctorName} 선생님 · {patient.name}님
+          {/* 요약 — 모두 골랐을 때 확인용.
+              role="status": [가장 빠른 시간] 성공 분기가 보조기술에 무음이던 문제를 닫는다(코드리뷰).
+              실패는 role="alert" 로 읽히는데 성공은 격자 깊숙한 라디오의 aria-checked 만 바뀌어
+              SR 사용자가 "버튼이 아무것도 안 했을 때만" 소리를 들었다. 이 블록이 곧 확인 문구다. */}
+          {patient && deptName && doctorLabel && slotLabel && (
+            <div
+              role="status"
+              className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm"
+            >
+              📅 <b>{dayLabel} {slotLabel}</b> · {deptName} · {doctorLabel} · {patient.name}님
               (#{patient.id})
             </div>
           )}
