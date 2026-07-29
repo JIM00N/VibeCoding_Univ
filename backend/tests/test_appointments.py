@@ -931,7 +931,7 @@ def test_doctor_endpoint_is_gone(monkeypatch):
 
 
 def test_patch_status_rejects_extra_doctor_id_field(monkeypatch):
-    # 역방향 고정: 상태 전이 라우트에 doctor_id 를 동봉하면 422 — 재배정은 /doctor 경로만 담당.
+    # 역방향 고정: 상태 전이 라우트에 doctor_id 를 동봉하면 422 — 일정 변경은 /reschedule 만 담당.
     monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
     monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
 
@@ -1048,7 +1048,7 @@ def test_reschedule_slot_conflict_returns_409_with_doctor_message(monkeypatch):
 
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    assert detail == "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail == "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
     assert detail != "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요."
 
 
@@ -1081,7 +1081,7 @@ def test_reschedule_patient_slot_conflict_returns_409(monkeypatch):
     # 슬롯 관련 기존 409 셋 모두와 달라야 한다(주어가 "환자"임을 밝히는 문구 — 코드리뷰 High).
     assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
     assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
-    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
 
 
 def test_reschedule_past_appointment_doctor_only_still_allowed(monkeypatch):
@@ -1109,9 +1109,69 @@ def test_reschedule_past_appointment_doctor_only_still_allowed(monkeypatch):
     assert resp.json()["doctor_id"] == 4
 
 
+def test_reschedule_past_appointment_same_time_explicitly_sent_is_allowed(monkeypatch):
+    # AC6 코드리뷰: 가드 판정이 `payload.reserved_at is not None` 이면, 과거 예약의 **기존 시각을
+    # 그대로 실어** 의사만 바꾸는 요청이 400 으로 막힌다. 판정은 "실제로 바뀌었는가"여야 한다.
+    # (프런트는 보통 바뀐 필드만 보내지만 API 계약이 payload 형태에 의존하면 안 된다.)
+    current = _fake_row(status="대기", doctor_id=3)  # 기본 reserved_at 은 과거
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda i: current)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_schedule",
+        lambda aid, did, at, srcs: _fake_row(doctor_id=did, reserved_at=at),
+    )
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={
+            "doctor_id": 4,
+            "reserved_at": current["reserved_at"].isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["doctor_id"] == 4
+
+
+def test_reschedule_wrong_department_precedes_past_guard(monkeypatch):
+    # 가드 순서 계약 고정(코드리뷰): ⑤ 소속 검증이 ⑥ 과거 가드보다 **앞**이다. 둘 다 걸리는
+    # 요청(다른 과 의사 + 과거 시각)에서 소속 400 이 나와야 한다 — 이전 주석은 순서를 거꾸로
+    # 적어 놓고, payload 에 doctor_id 가 없어 도달하지 않는 조합으로만 초록이었다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda i: _fake_row(status="대기", doctor_id=3)
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 1)  # 다른 과
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"doctor_id": 5, "reserved_at": "2026-07-20T10:00:00Z"},
+    )
+
+    assert resp.status_code == 400
+    assert "진료과" in resp.json()["detail"]
+    assert resp.json()["detail"] != "이미 지난 시간이에요. 다른 시간을 골라 주세요."
+
+
+def test_update_appointment_schedule_rejects_none_doctor_id():
+    # 코드리뷰: 형제 함수 insert_appointment 와 같은 가드. NULL doctor_id 는 게이트 조각의
+    # `a.doctor_id = NULL` 비교를 항상 no-match 로 만들어 충돌 검사를 통째로 무력화한다
+    # (appointment.doctor_id 는 스키마상 nullable). 커넥션을 열기 전에 거부한다.
+    with pytest.raises(ValueError):
+        appointments_db.update_appointment_schedule(
+            10, None, datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc), ("대기", "확정")
+        )
+
+
 def test_reschedule_to_past_slot_returns_400_without_db(monkeypatch):
     # AC6: 새 시각이 이미 지났으면 400 — 생성 경로(create_appointment)와 **바이트 동일 문구**.
-    # 가드는 의사 소속 검증·UPDATE 보다 앞이라 그 db 함수들은 호출되면 안 된다.
+    # 가드는 UPDATE 보다 앞이라 update 는 호출되면 안 된다. ⚠️ 의사 소속 검증(⑤)은 이 가드(⑥)
+    # **앞**이다 — 이 요청은 doctor_id 를 안 보내 소속 검증이 스킵될 뿐이다(코드리뷰: 이전 주석이
+    # 순서를 거꾸로 적어 성립하지 않는 계약을 고정하고 있었다). doctor_id 를 함께 보내는 조합은
+    # 아래 test_reschedule_wrong_department_rejected 가 소속 400 우선을 고정한다.
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda i: _fake_row(status="대기", doctor_id=3)
     )
@@ -1257,7 +1317,7 @@ def test_create_appointment_auto_all_taken_returns_409(monkeypatch):
     detail = resp.json()["detail"]
     assert detail == "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
     assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
-    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
 
 
 def test_create_appointment_auto_empty_department_returns_400(monkeypatch):
@@ -1408,7 +1468,7 @@ def test_create_appointment_patient_slot_conflict_returns_409(monkeypatch):
     # 슬롯 관련 기존 409 **셋 모두**와 달라야 한다(코드리뷰: 이전엔 셋 중 둘만 비교했다).
     assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
     assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
-    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
 
 
 def test_create_appointment_auto_patient_slot_conflict_returns_409(monkeypatch):

@@ -52,7 +52,11 @@ def test_get_availability_returns_taken_slots(monkeypatch):
 
 
 def test_get_availability_empty_returns_empty_list(monkeypatch):
-    monkeypatch.setattr(availability_db, "select_taken_slots", lambda *a: [])
+    monkeypatch.setattr(
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: [],
+    )
 
     client = TestClient(app)
     resp = client.get(
@@ -120,7 +124,9 @@ def test_get_availability_includes_patient_taken(monkeypatch):
     captured: dict = {}
 
     monkeypatch.setattr(
-        availability_db, "select_taken_slots", lambda *a: doctor_taken
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: doctor_taken,
     )
 
     def fake_patient_select(patient_id, start, end, exclude_appointment_id):
@@ -151,7 +157,11 @@ def test_get_availability_includes_patient_taken(monkeypatch):
 
 def test_get_availability_without_patient_id_skips_patient_query(monkeypatch):
     # patient_id 가 없으면 환자 축 조회를 아예 하지 않는다(불필요한 왕복 금지 + 기존 계약 보존).
-    monkeypatch.setattr(availability_db, "select_taken_slots", lambda *a: [])
+    monkeypatch.setattr(
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: [],
+    )
 
     def _fail(*args, **kwargs):
         raise AssertionError("patient_id 가 없으면 환자 축 db 를 건드리면 안 돼요.")

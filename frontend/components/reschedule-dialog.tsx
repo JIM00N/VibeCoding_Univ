@@ -43,12 +43,24 @@ import { api, ApiError, type Appointment, type Doctor } from "@/lib/api";
 import { formatSeoulDayLabel, seoulDayOptions, slotsForSeoulDay } from "@/lib/booking-slots";
 import { formatReservedAt } from "@/lib/format";
 
+// 상태 경합 409 문구 — 서버 `services/appointments.py` 의 CAS_CONFLICT_DETAIL 정본과 바이트 동일.
+// 세 종류 409(의사 축·환자 축·CAS)를 status 코드만으로는 못 가르는데, CAS 는 "이 화면이 stale"이라
+// 대응이 정반대다(셀 마킹이 아니라 목록 재동기화). 계약 테스트가 서버 쪽 문자열을 고정하고 있다.
+const CAS_CONFLICT_DETAIL = "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요.";
+
 // 첫 오류 필드로 스크롤·포커스한다 — 390×844에서 아래까지 스크롤한 채 제출하면 인라인 오류가
 // 화면 밖(위쪽)에 렌더돼 버튼이 먹통인 것처럼 보인다(proxy-booking-dialog 와 같은 이유·구현).
+// ⚠️ 대상이 포커스 불가 요소(라벨용 <span> 등)면 scrollIntoView 만 되고 .focus() 는 조용히
+// 실패한다 — 임시로 tabIndex=-1 을 붙여 프로그램적 포커스를 가능하게 하고, blur 시 되돌린다
+// (탭 순서엔 넣지 않는다). 코드리뷰: SR 사용자가 오류로 이동하지 못하던 문제.
 function revealField(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
   el.scrollIntoView({ block: "center" });
+  if (!el.hasAttribute("tabindex")) {
+    el.setAttribute("tabindex", "-1");
+    el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
+  }
   el.focus();
 }
 
@@ -57,6 +69,7 @@ export function RescheduleDialog({
   open,
   onOpenChange,
   onUpdated,
+  onStaleList,
 }: {
   /** 변경 대상 예약(대기·확정). null 이면 렌더하지 않는다. */
   appointment: Appointment | null;
@@ -64,6 +77,9 @@ export function RescheduleDialog({
   onOpenChange: (open: boolean) => void;
   /** 갱신된 예약(정규 모델)을 목록 소유자에게 올려보낸다 — 반영 방식은 페이지가 정한다. */
   onUpdated: (appointment: Appointment) => void;
+  /** 이 화면이 stale 하다는 신호(상태 경합·비 슬롯 실패) — 목록 소유자가 서버 진실로 재동기화한다.
+   *  2.2 패턴: 삭제된 runDoctorChange 의 catch 가 setReloadNonce 로 하던 일(코드리뷰 회귀 복구). */
+  onStaleList: () => void;
 }) {
   const [doctors, setDoctors] = useState<Doctor[] | null>(null);
   const [doctorLoadError, setDoctorLoadError] = useState<string | null>(null);
@@ -86,13 +102,16 @@ export function RescheduleDialog({
   // 이 축은 그대로이고, 섞으면 두 축의 의미가 무너진다 — 5.3 선례).
   const [patientBusyMs, setPatientBusyMs] = useState<ReadonlySet<number>>(new Set());
   const [availabilityNonce, setAvailabilityNonce] = useState(0);
-  // 가용성 응답 시점의 최신 선택을 읽기 위한 미러 — effect 클로저의 selectedIso 는 stale 하다(5.3 리뷰 P8).
+  // 가용성 응답 시점의 **화면에 실제로 선택돼 보이는 값**을 읽기 위한 미러 — effect 클로저의
+  // 상태값은 stale 하다(5.3 리뷰 P8).
+  // ⚠️ `selectedIso` 가 아니라 `effectiveIso` 를 미러한다(코드리뷰 High): 손대지 않은 기본 선택은
+  // `selectedIso === null` 이라, selectedIso 를 미러하면 그 선택은 P8 복구 분기를 **한 번도 안 탄다**.
+  // 의사를 바꿔 그 슬롯이 taken 이 되면 셀은 회색인데 선택은 남고 버튼도 활성이라, 화면이 이미
+  // 아는 충돌을 사용자만 모른 채 제출해 409 를 맞는다. 아래 effect 로 effectiveIso 를 따라간다.
   const selectedIsoRef = useRef<string | null>(null);
-  useEffect(() => {
-    selectedIsoRef.current = selectedIso;
-  }, [selectedIso]);
 
   const [slotErr, setSlotErr] = useState<string | null>(null);
+  const [doctorErr, setDoctorErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // 더블클릭 재진입 방지 — disabled 리렌더 커밋 전 두 번째 클릭이 중복 요청을 만든다(2.1·2.2 패턴).
   const submittingRef = useRef(false);
@@ -108,8 +127,14 @@ export function RescheduleDialog({
   // 두 함수(seoulDayOptions·slotsForSeoulDay)의 조합으로 구한다(5.4 사본 금지 규율).
   // 과거 예약이나 7일 밖 예약은 undefined — 그때는 날짜/시간 미선택으로 시작하고, 의사만 바꾸는
   // 경로가 살아 있어야 한다(서버도 시각 미지정이면 과거 가드를 적용하지 않는다).
+  // ⚠️ **지난 슬롯을 거른 뒤** 찾는다(코드리뷰): 격자에 실제로 고를 수 있는 셀이 있을 때만
+  // "현재 예약일" 로 인정해야 아래 안내 조건(`!currentDayYmd`)과 기본 선택(`currentSlotIso`)이
+  // 같은 기준을 본다. 필터 전 격자로 찾으면 "오늘 09:00 예약을 오후에 열기" 에서 안내는 안 뜨는데
+  // 선택은 비어 직원이 이유를 알 수 없다.
   const currentDayYmd = useMemo(() => {
     if (currentMs === null) return null;
+    const nowMs = new Date().getTime();
+    if (currentMs <= nowMs) return null; // 이미 지난 예약 — 격자에서 고를 수 없다.
     return (
       dayOptions.find((d) =>
         slotsForSeoulDay(d.ymd).some((s) => new Date(s.iso).getTime() === currentMs),
@@ -117,7 +142,9 @@ export function RescheduleDialog({
     );
   }, [dayOptions, currentMs]);
 
-  // 기본 날짜 = 현재 예약일 → 없으면 남은 슬롯이 있는 첫 날(저녁에 열면 오늘은 0개라 막다른 길).
+  // 기본 날짜 = 현재 예약일 → 없으면 남은 슬롯이 있는 첫 날. 위 가드 덕분에 "오늘 09:00 예약을
+  // 진료 종료 후 열기" 가 빈 격자 막다른 길로 떨어지지 않고 폴백을 탄다(proxy-booking-dialog:138
+  // 이 같은 이유로 두는 폴백 — 이식 때 조건부로 무력화됐던 것을 복구).
   const defaultYmd = useMemo(() => {
     if (currentDayYmd) return currentDayYmd;
     const nowMs = new Date().getTime();
@@ -143,6 +170,10 @@ export function RescheduleDialog({
     return slots.find((s) => new Date(s.iso).getTime() === currentMs)?.iso ?? null;
   }, [slots, currentMs, effectiveYmd, currentDayYmd]);
   const effectiveIso = slotTouched ? selectedIso : (selectedIso ?? currentSlotIso);
+  // 위 ref 를 화면 표시값으로 동기화한다(선언 위치상 effectiveIso 계산 뒤여야 한다).
+  useEffect(() => {
+    selectedIsoRef.current = effectiveIso;
+  }, [effectiveIso]);
 
   // 실제로 막아야 할 집합 = 의사 축 ∪ 환자 축(FR-15b). 상태는 분리, 합치기는 렌더 시점에만(5.3 규율).
   const unavailableMs = useMemo(() => {
@@ -200,12 +231,16 @@ export function RescheduleDialog({
       .then((av) => {
         if (cancelled) return;
         const toMsSet = (xs: string[]) => new Set(xs.map((t) => new Date(t).getTime()));
-        setPatientBusyMs(toMsSet(av.patient_taken));
+        const patientBusy = toMsSet(av.patient_taken);
         const next = toMsSet(av.taken);
+        setPatientBusyMs(patientBusy);
         setTakenMs(next);
         // 이미 고른 슬롯이 점유로 판명되면 해제하되 — 조용히 지우지 않고 — 인라인으로 알린다(5.3 리뷰 P8).
+        // ⚠️ 판정은 **두 축 합집합**이다(코드리뷰): 렌더는 union 을 쓰는데 해제만 의사 축을 보면,
+        // 그 환자가 다른 예약을 잡아 막힌 슬롯에서 셀은 비활성인데 선택이 남아 제출 시 409 가 난다.
+        const blocked = new Set([...next, ...patientBusy]);
         const cur = selectedIsoRef.current;
-        if (cur && next.has(new Date(cur).getTime())) {
+        if (cur && blocked.has(new Date(cur).getTime())) {
           setSelectedIso(null);
           setSlotTouched(true);
           setSlotErr("고른 시간이 그새 예약됐어요. 다른 시간을 골라 주세요.");
@@ -244,6 +279,7 @@ export function RescheduleDialog({
     // 고른 시간·가용성이 이유 없이 날아간다(6.3 데드락과 같은 함정).
     if (v === doctorId) return;
     setDoctorId(v);
+    setDoctorErr(null);
     // 이전 의사의 점유가 새 의사 그리드에 잔상으로 남지 않게(false-block 방향은 서버 백스톱이 없다).
     setTakenMs(null);
     // 이전 의사 기준의 슬롯 오류도 함께 지운다(5.3 코드리뷰 — 안 지우면 새 그리드 위에 red 가 남는다).
@@ -260,8 +296,16 @@ export function RescheduleDialog({
   }
 
   async function handleSubmit() {
-    if (!appointment || !doctorId) return;
-    if (effectiveIso && new Date(effectiveIso).getTime() <= new Date().getTime()) {
+    if (!appointment) return;
+    if (!doctorId) {
+      // doctor_id 가 null 인 예약(스키마상 허용)에서는 hasChange 가 timeChanged 만으로 true 가 돼
+      // 버튼이 활성인데, 여기서 조용히 return 하면 요청도 오류도 없이 아무 일이 안 일어난다
+      // (코드리뷰). 서버도 NULL doctor_id 로는 충돌 게이트가 성립하지 않아 거부한다.
+      setDoctorErr("담당 의사를 선택해 주세요.");
+      revealField("reschedule-doctor");
+      return;
+    }
+    if (timeChanged && effectiveIso && new Date(effectiveIso).getTime() <= new Date().getTime()) {
       // 다이얼로그를 오래 열어두면 고를 때 미래였던 슬롯이 지나간다 — 제출 직전 재검증(UX 층).
       // 서버에도 과거 시각 가드(400)가 있어 최종 방어는 서버가 담당한다.
       setSlotErr("고른 시간이 이미 지났어요. 다른 시간을 골라 주세요.");
@@ -273,35 +317,48 @@ export function RescheduleDialog({
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
+    // 요청 시점의 선택을 고정한다 — catch 는 이 값으로만 마킹·해제를 판단한다(stale 클로저 가드).
+    const submittedIso = timeChanged ? effectiveIso : null;
     try {
       // 바뀐 필드만 보낸다 — 서버는 미지정 필드를 현재 값으로 채운다. 시각을 안 보내면 서버의
       // 과거 시각 가드도 적용되지 않아, 지난 예약의 담당 의사만 바꾸는 경로가 살아 있다(AC6).
       const updated = await api.rescheduleAppointment(appointment.id, {
         ...(doctorChanged ? { doctor_id: Number(doctorId) } : {}),
-        ...(timeChanged && effectiveIso ? { reserved_at: effectiveIso } : {}),
+        ...(submittedIso ? { reserved_at: submittedIso } : {}),
       });
       onUpdated(updated);
       toast.success("예약 일정을 바꿨어요.");
       submittingRef.current = false;
       onOpenChange(false);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        // 도메인 거부(UX-DR7) — 서버 detail 그대로 red 인라인 + 그 셀 즉시 taken + 선택 해제,
-        // 재조회로 다른 셀도 동기화한다. 다이얼로그는 닫지 않는다(입력 보존).
+      const isSlotConflict =
+        err instanceof ApiError && err.status === 409 && err.message !== CAS_CONFLICT_DETAIL;
+      if (isSlotConflict) {
+        // 슬롯 도메인 거부(UX-DR7) — 의사 축·환자 축 409. 서버 detail 그대로 red 인라인 + 그 셀
+        // 즉시 taken + 선택 해제, 재조회로 다른 셀도 동기화한다. 다이얼로그는 닫지 않는다(입력 보존).
         // 마킹은 의사 축(takenMs)에 넣는다 — 렌더는 두 축 합집합이라 결과가 같고, 이어지는
         // 재조회가 두 축을 서버 진실로 덮는다(chore/patient-slot-guard 코드리뷰 결론).
         setSlotErr(err.message);
-        if (effectiveIso) {
-          const failedMs = new Date(effectiveIso).getTime();
-          setTakenMs((prev) => new Set([...(prev ?? []), failedMs]));
+        if (submittedIso) {
+          setTakenMs((prev) => new Set([...(prev ?? []), new Date(submittedIso).getTime()]));
         }
-        setSelectedIso(null);
-        setSlotTouched(true);
+        // ⚠️ 요청 당시 값이 여전히 최신일 때만 선택을 지운다(코드리뷰): 응답 대기 중 사용자가 다른
+        // 슬롯을 골랐다면 stale 클로저가 그 새 선택까지 날린다. 컨트롤을 잠가도 두 겹으로 막는다.
+        if (selectedIsoRef.current === submittedIso) {
+          setSelectedIso(null);
+          setSlotTouched(true);
+        }
         setAvailabilityNonce((n) => n + 1);
         revealField("reschedule-slot-label");
       } else {
-        // 4xx {detail} 한국어를 그대로 보여준다(AD-10). 실패해도 닫지 않아 입력이 남는다.
+        // CAS 409(상태 경합)와 그 외 실패 — 이 화면이 stale 하다는 신호다. 셀을 taken 으로 찍으면
+        // 안 된다(시간 문제가 아니다). "목록을 새로고침해 주세요"는 다이얼로그 안에서 따를 수
+        // 없으므로, 목록을 서버 진실로 재동기화하고 다이얼로그를 닫는다(2.2 패턴 복구 — 코드리뷰
+        // High: 삭제된 runDoctorChange 의 catch 가 하던 일이다).
         toast.error(err instanceof Error ? err.message : "일정을 바꾸지 못했어요.");
+        onStaleList();
+        submittingRef.current = false;
+        onOpenChange(false);
       }
     } finally {
       submittingRef.current = false;
@@ -340,13 +397,19 @@ export function RescheduleDialog({
               items={doctorItems}
               value={doctorId}
               onValueChange={(v) => handleDoctorChange(v as string)}
-              disabled={doctorsLoading}
+              disabled={doctorsLoading || submitting}
             >
               <SelectTrigger
                 id="reschedule-doctor"
                 className="w-full"
-                aria-invalid={doctorLoadError ? true : undefined}
-                aria-describedby={doctorLoadError ? "reschedule-doctor-error" : undefined}
+                aria-invalid={doctorLoadError || doctorErr ? true : undefined}
+                aria-describedby={
+                  doctorErr
+                    ? "reschedule-doctor-required"
+                    : doctorLoadError
+                      ? "reschedule-doctor-error"
+                      : undefined
+                }
               >
                 <SelectValue
                   placeholder={doctorsLoading ? "의사를 불러오는 중…" : "담당 의사를 선택하세요"}
@@ -378,6 +441,11 @@ export function RescheduleDialog({
                 </Button>
               </div>
             )}
+            {doctorErr && (
+              <p id="reschedule-doctor-required" role="alert" className="text-sm text-destructive">
+                {doctorErr}
+              </p>
+            )}
           </div>
 
           {/* 날짜 — 오늘부터 7일. 현재 예약일이 그 안에 있으면 기본 선택된다. */}
@@ -387,6 +455,7 @@ export function RescheduleDialog({
               items={dateItems}
               value={effectiveYmd}
               onValueChange={(v) => handleDateChange(v as string)}
+              disabled={submitting}
             >
               <SelectTrigger id="reschedule-date" className="w-full">
                 <SelectValue placeholder="날짜를 선택하세요" />
@@ -418,19 +487,25 @@ export function RescheduleDialog({
             ) : (
               // SlotPicker 는 동결이라 aria-describedby 를 받지 않는다 — 오류가 있을 때 그룹 라벨
               // 체인(aria-labelledby)에 오류 문단 id 를 이어 붙여 SR 이 함께 읽게 한다(6.3 선례).
-              <SlotPicker
-                slots={slots}
-                value={effectiveIso}
-                ariaLabelledBy={
-                  slotErr ? "reschedule-slot-label reschedule-slot-error" : "reschedule-slot-label"
-                }
-                takenMs={unavailableMs}
-                onChange={(iso) => {
-                  setSelectedIso(iso);
-                  setSlotTouched(true);
-                  setSlotErr(null);
-                }}
-              />
+              // SlotPicker 는 동결 컴포넌트라 disabled prop 이 없다 — 저장 중 잠금은 네이티브
+              // <fieldset disabled> 로 건다(안의 button 이 전부 비활성). display:contents 라
+              // 레이아웃엔 영향이 없다. 잠그는 이유: 응답 대기 중 다른 셀을 고르면 in-flight
+              // 요청의 catch 가 그 새 선택을 지운다(proxy-booking-dialog:853 과 같은 이유).
+              <fieldset disabled={submitting} className="contents">
+                <SlotPicker
+                  slots={slots}
+                  value={effectiveIso}
+                  ariaLabelledBy={
+                    slotErr ? "reschedule-slot-label reschedule-slot-error" : "reschedule-slot-label"
+                  }
+                  takenMs={unavailableMs}
+                  onChange={(iso) => {
+                    setSelectedIso(iso);
+                    setSlotTouched(true);
+                    setSlotErr(null);
+                  }}
+                />
+              </fieldset>
             )}
             {allSlotsTaken && (
               <p role="status" className="text-sm text-muted-foreground">

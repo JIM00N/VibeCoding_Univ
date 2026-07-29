@@ -337,6 +337,12 @@ export default function StaffAppointmentsPage() {
           // 예약 시각이 함께 갱신된다. 정렬은 목록 SQL 이 id desc 라 시각이 바뀌어도 유지된다.
           setAppointments((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
         }}
+        onStaleList={() => {
+          // 상태 경합(CAS 409)·비 슬롯 실패는 이 화면이 stale 하다는 신호 — 서버 진실로
+          // 재동기화한다(2.2 패턴). 다른 직원이 완료 처리한 예약이 목록에 대기로 남아 재시도가
+          // 반복되던 것을 막는다.
+          setReloadNonce((n) => n + 1);
+        }}
       />
 
       {/* 대리 예약 다이얼로그 (Story 6.3, FR-18) — 폼은 컴포넌트가 소유하고, 생성 결과만 받아 목록에

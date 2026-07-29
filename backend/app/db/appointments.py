@@ -417,6 +417,13 @@ def update_appointment_schedule(
     status 경합(CAS 불일치)·없는 id 는 None(서비스가 CAS 409 로 매핑) — 세 409 는 문구로 구분된다.
     파라미터화 SQL(injection 방지).
     """
+    if doctor_id is None:
+        # insert_appointment 와 같은 이유의 형제 가드(코드리뷰): 게이트 조각의 `a.doctor_id = NULL`
+        # 비교는 항상 no-match 라 slot_taken 이 영구 false 가 되고, 충돌 검사가 통째로 무력화된 채
+        # 이미 찬 슬롯으로 이동이 통과한다. appointment.doctor_id 는 스키마상 nullable 이므로
+        # (앱이 항상 채우지만 DB 는 허용) db 계층에서도 명시 거부한다 — 커넥션을 열기 전에 실패해
+        # 테스트도 DB 없이 가능하다.
+        raise ValueError("update_appointment_schedule: doctor_id 없이는 충돌 게이트가 성립하지 않아요.")
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(

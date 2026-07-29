@@ -42,8 +42,10 @@ SLOT_EXPR = "date_bin('30 minutes', {col}, timestamptz '2000-01-01 00:00:00+00')
 
 # 충돌원 합집합(AD-4): 활성 예약(대기·확정) ∪ walk-in 기록(appointment_id null).
 # 취소=해제·완료=무관은 status 필터가 자연 처리한다(별도 해제 로직 없음).
-# %(exclude_appointment_id)s 는 의사 변경의 자기 행 제외용 — 생성·조회는 None 을 넘긴다
-# (조각을 한 벌로 유지하기 위한 nullable 파라미터). 파라미터는 named(%(name)s) — 이 조각을
+# %(exclude_appointment_id)s 는 자기 행 제외용 — 일정 변경(Story 7.1)의 쓰기 게이트가 자기
+# 예약을, 같은 스토리의 사전 표시 조회가 "지금 바꾸는 예약"을 제외하는 데 쓴다. 생성 경로는
+# 자기 행이 없어 None 을 넘긴다(조각을 한 벌로 유지하기 위한 nullable 파라미터).
+# 파라미터는 named(%(name)s) — 이 조각을
 # 내장하는 문 전체가 named 로 통일해야 한다(한 문장 안 positional 혼용 금지).
 # doctor_sql 은 판정 대상 의사의 SQL 표현식 — 기본값(파라미터)이면 기존 소비자와 생성 SQL 이
 # 동일하고, 자동 pick(Story 5.2)은 상관 컬럼("d.id")을 넣어 의사별 판정으로 재사용한다(조각 1벌).
