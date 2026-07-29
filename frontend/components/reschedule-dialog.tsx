@@ -186,6 +186,18 @@ export function RescheduleDialog({
     unavailableMs !== undefined &&
     slots.every((s) => unavailableMs.has(new Date(s.iso).getTime()));
 
+  // 환자 축으로 막힌 슬롯의 **라벨** — 셀은 두 축을 구분 없이 `예약됨` 으로만 그린다(slot-picker 는
+  // 동결이라 축을 알리는 라벨을 넣을 수 없다). 그러면 "이 의사는 비었는데 왜 안 되지?" 가 된다 —
+  // 실제로 직원이 곧바로 걸린 혼란이다(2026-07-29 실측). 격자 아래 한 줄로 사유를 밝힌다.
+  // 이 날짜에 보이는 슬롯만 대상이다(범위 밖 예약까지 나열하면 소음).
+  const patientBusyLabels = useMemo(
+    () =>
+      slots
+        .filter((s) => patientBusyMs.has(new Date(s.iso).getTime()))
+        .map((s) => s.label),
+    [slots, patientBusyMs],
+  );
+
   // 그 예약의 진료과 의사 목록 — 과 이동은 스코프 밖이라 후보는 항상 이 과 안이다.
   // ⚠️ 현재 담당 의사를 **거르지 않는다**(2.3 과의 차이): 의사를 그대로 두고 시각만 바꾸는 것이
   //    정당한 요청이 됐다. 걸러 내면 그 조합이 UI 에서 불가능해진다(AC2).
@@ -510,6 +522,15 @@ export function RescheduleDialog({
             {allSlotsTaken && (
               <p role="status" className="text-sm text-muted-foreground">
                 이 날짜는 예약이 모두 찼어요. 다른 날짜를 골라 주세요.
+              </p>
+            )}
+            {/* 환자 축 사유 안내(FR-15b) — 의사를 바꿔도 안 풀리는 칸이 왜 막혔는지 알린다.
+                의사 축(그 의사가 찼다)과 달리 이 축은 의사를 바꿔도 그대로라, 사유를 모르면
+                직원이 의사만 계속 바꿔 보게 된다. 서버 거부 문구와 주어를 맞춘다("이 환자는"). */}
+            {patientBusyLabels.length > 0 && (
+              <p role="status" className="text-sm text-muted-foreground">
+                이 환자는 <b>{patientBusyLabels.join(" · ")}</b>에 이미 다른 예약이 있어요. 그
+                시간은 담당 의사를 바꿔도 고를 수 없어요.
               </p>
             )}
             {slotErr && (

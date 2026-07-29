@@ -62,6 +62,8 @@
 
 ## Deferred from: code review of 7-1-예약-일정-변경 (2026-07-29)
 
+- **환자 축으로 막힌 슬롯의 사유 안내가 환자 예약·대리 예약 화면에 없다** — 슬롯 셀은 두 축(그 의사가 찼다 / 이 환자가 이미 잡았다)을 구분 없이 `예약됨` 으로만 그린다(`slot-picker.tsx` 동결). 의사를 바꿔도 안 풀리는 칸이라 사유를 모르면 사용자가 의사만 계속 바꿔 보게 된다. Story 7.1 이 `[변경]` 다이얼로그에만 격자 아래 안내 한 줄을 넣었고(도달 빈도가 가장 높아서), 같은 갭이 `patient/book`·`proxy-booking-dialog` 에 남아 있다 — 둘 다 done 스토리라 7.1 승인 범위 밖. 처리 시 세 화면이 같은 안내를 쓰도록 공용화하는 게 자연스럽다(위 `revealField` 사본 건과 함께 볼 것). [frontend/app/patient/book/page.tsx · frontend/components/proxy-booking-dialog.tsx]
+
 - **`GET /availability` 의 `exclude_appointment_id` 무검증** — 그 예약이 조회 대상 의사·환자와 관련 있는지 확인하지 않는다. 남의 예약 id 를 넘기면 그 점유가 사전 표시에서 가려지고, 쓰기 게이트는 항상 자기 행만 제외하므로 제출 시 409 가 난다. 프런트는 항상 자기 id 를 보내고 최종 차단은 쓰기 게이트가 하므로 실피해는 "제출 후 409" 뿐. 서버측 소유권 검증(`fetch_appointment` 후 doctor_id·patient_id 대조)은 별도 작업. [backend/app/routers/availability.py:14-37 · backend/app/services/availability.py:31-38]
 - **환자 축 409 테스트가 제약 이름 확인을 실제로 검증 못 함** — 손제작 `UniqueViolation` 은 `exc.diag.constraint_name` 이 항상 None 이라 `_reject_unique_violation` 의 폴백 분기만 탄다. 테스트 안의 제약 이름 문자열은 장식이고, deferred-work 가 예고한 `(doctor_id, reserved_at)` 부분 유니크 추가 시 의사 충돌이 환자 문구로 오보되는 시나리오는 커버리지 0. `_reject_unique_violation` docstring 과 위 60행이 이미 인정한 알려진 한계(psycopg diag 는 서버 응답에서만 채워짐). 실 보증은 curl 실증. [backend/tests/test_appointments.py:1055-1078]
 - **`revealField` 두 번째 사본** — `frontend/components/proxy-booking-dialog.tsx:68-73` 과 바이트 동일한 5줄 헬퍼가 `reschedule-dialog.tsx:48-53` 에 복제됐다. 5.4 사본 수렴 규율 대상 — 공용 유틸(`lib/` 또는 `components/`) 승격 후보. Epic 5 회고 액션 #3(부채 순증 대응 방식) 의 실제 사례로 함께 볼 것. [frontend/components/reschedule-dialog.tsx:48-53]
