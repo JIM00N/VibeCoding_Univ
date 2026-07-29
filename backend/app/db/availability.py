@@ -2,7 +2,7 @@
 
 Story 5.1(FR-15)의 단일 관문. (의사, 슬롯) 점유 판정의 source of truth 인 SQL 조각을
 이 모듈에 **정확히 한 벌**만 정의하고, 점유가 발생하는 쓰기 문(db/appointments.py 의
-_INSERT_APPOINTMENT·_UPDATE_APPOINTMENT_DOCTOR)과 아래 범위 조회가 조합해 쓴다(AD-3·AD-4).
+_INSERT_APPOINTMENT·_UPDATE_APPOINTMENT_SCHEDULE)과 아래 범위 조회가 조합해 쓴다(AD-3·AD-4).
 
 AD-4 의 `check_and_occupy(conn, …)` 은 이 프로젝트의 확립 관용구인 **"단일 CTE 문 =
 한 커넥션 = 한 트랜잭션"**(Epic 2 회고 액션 #4, 3.1 기록+완료 전이 선례)으로 이행한다 —
@@ -42,8 +42,10 @@ SLOT_EXPR = "date_bin('30 minutes', {col}, timestamptz '2000-01-01 00:00:00+00')
 
 # 충돌원 합집합(AD-4): 활성 예약(대기·확정) ∪ walk-in 기록(appointment_id null).
 # 취소=해제·완료=무관은 status 필터가 자연 처리한다(별도 해제 로직 없음).
-# %(exclude_appointment_id)s 는 의사 변경의 자기 행 제외용 — 생성·조회는 None 을 넘긴다
-# (조각을 한 벌로 유지하기 위한 nullable 파라미터). 파라미터는 named(%(name)s) — 이 조각을
+# %(exclude_appointment_id)s 는 자기 행 제외용 — 일정 변경(Story 7.1)의 쓰기 게이트가 자기
+# 예약을, 같은 스토리의 사전 표시 조회가 "지금 바꾸는 예약"을 제외하는 데 쓴다. 생성 경로는
+# 자기 행이 없어 None 을 넘긴다(조각을 한 벌로 유지하기 위한 nullable 파라미터).
+# 파라미터는 named(%(name)s) — 이 조각을
 # 내장하는 문 전체가 named 로 통일해야 한다(한 문장 안 positional 혼용 금지).
 # doctor_sql 은 판정 대상 의사의 SQL 표현식 — 기본값(파라미터)이면 기존 소비자와 생성 SQL 이
 # 동일하고, 자동 pick(Story 5.2)은 상관 컬럼("d.id")을 넣어 의사별 판정으로 재사용한다(조각 1벌).
@@ -117,37 +119,58 @@ _SELECT_TAKEN_SLOTS = f"""
 # 튀어나온다. walk-in medical_record 를 합집합하지 않는 것도 그래서다 — 인덱스가 단일 테이블
 # 제약이라 그 arm 을 못 보고, 화면만 막으면 두 층이 어긋난다.
 # 의사 축(_SELECT_TAKEN_SLOTS)과 달리 doctor 조건이 없다 — 이 축은 의사와 무관하다.
+# 자기 행 제외(Story 7.1, FR-19)는 의사 축 조각(occupied_sources_sql)과 **같은 관용구**를 쓴다 —
+# 일정 변경 다이얼로그가 그 예약 자신의 슬롯을 taken 으로 그리면 "시각 유지 + 의사만 변경"이
+# 화면에서 막힌다(서버는 exclude_appointment_id 로 허용하는데 UI 만 좁아지는 어긋남).
+# ⚠️ 두 축 **모두** 제외해야 한다: 자기 예약은 환자 축에도 들어 있어 한쪽만 고치면 여전히 막힌다.
 _SELECT_PATIENT_TAKEN_SLOTS = f"""
     select distinct {SLOT_EXPR.format(col="a.reserved_at")} as slot
     from public.appointment a
     where a.patient_id = %(patient_id)s
       and a.status in ('대기', '확정')
+      and (%(exclude_appointment_id)s::bigint is null or a.id <> %(exclude_appointment_id)s)
       and {SLOT_EXPR.format(col="a.reserved_at")} >= %(start)s
       and {SLOT_EXPR.format(col="a.reserved_at")} < %(end)s
     order by slot
 """
 
 
-def select_patient_taken_slots(patient_id: int, start: datetime, end: datetime) -> list[datetime]:
-    """한 환자의 [start, end) 활성 예약 슬롯 시작 시각 목록(FR-15b). 파라미터화 SQL."""
+def select_patient_taken_slots(
+    patient_id: int, start: datetime, end: datetime, exclude_appointment_id: int | None = None
+) -> list[datetime]:
+    """한 환자의 [start, end) 활성 예약 슬롯 시작 시각 목록(FR-15b). 파라미터화 SQL.
+
+    exclude_appointment_id 를 주면 그 예약 자신을 제외한다(Story 7.1 — 일정 변경 사전 표시).
+    """
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 _SELECT_PATIENT_TAKEN_SLOTS,
-                {"patient_id": patient_id, "start": start, "end": end},
+                {
+                    "patient_id": patient_id,
+                    "exclude_appointment_id": exclude_appointment_id,
+                    "start": start,
+                    "end": end,
+                },
             )
             return [row["slot"] for row in cur.fetchall()]
 
 
-def select_taken_slots(doctor_id: int, start: datetime, end: datetime) -> list[datetime]:
-    """한 의사의 [start, end) 점유 슬롯 시작 시각 목록을 반환한다. 파라미터화 SQL(injection 방지)."""
+def select_taken_slots(
+    doctor_id: int, start: datetime, end: datetime, exclude_appointment_id: int | None = None
+) -> list[datetime]:
+    """한 의사의 [start, end) 점유 슬롯 시작 시각 목록을 반환한다. 파라미터화 SQL(injection 방지).
+
+    exclude_appointment_id 를 주면 그 예약 자신을 제외한다(Story 7.1 — 일정 변경 사전 표시).
+    조각(occupied_sources_sql)의 nullable 파라미터를 채우는 것뿐이라 None 이면 기존 판정과 동일하다.
+    """
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 _SELECT_TAKEN_SLOTS,
                 {
                     "doctor_id": doctor_id,
-                    "exclude_appointment_id": None,
+                    "exclude_appointment_id": exclude_appointment_id,
                     "start": start,
                     "end": end,
                 },

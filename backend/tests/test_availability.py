@@ -23,7 +23,7 @@ def test_get_availability_returns_taken_slots(monkeypatch):
     ]
     captured: dict = {}
 
-    def fake_select(doctor_id, start, end):
+    def fake_select(doctor_id, start, end, exclude_appointment_id):
         captured["doctor_id"] = doctor_id
         return taken
 
@@ -52,7 +52,11 @@ def test_get_availability_returns_taken_slots(monkeypatch):
 
 
 def test_get_availability_empty_returns_empty_list(monkeypatch):
-    monkeypatch.setattr(availability_db, "select_taken_slots", lambda *a: [])
+    monkeypatch.setattr(
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: [],
+    )
 
     client = TestClient(app)
     resp = client.get(
@@ -85,7 +89,7 @@ def test_get_availability_normalizes_naive_datetimes_to_utc(monkeypatch):
     # tz-naive 입력은 UTC 로 간주(to_slot 과 같은 규약) — db 에는 항상 tz-aware UTC 가 전달된다.
     captured: dict = {}
 
-    def fake_select(doctor_id, start, end):
+    def fake_select(doctor_id, start, end, exclude_appointment_id):
         captured["start"] = start
         captured["end"] = end
         return []
@@ -120,10 +124,12 @@ def test_get_availability_includes_patient_taken(monkeypatch):
     captured: dict = {}
 
     monkeypatch.setattr(
-        availability_db, "select_taken_slots", lambda doctor_id, start, end: doctor_taken
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: doctor_taken,
     )
 
-    def fake_patient_select(patient_id, start, end):
+    def fake_patient_select(patient_id, start, end, exclude_appointment_id):
         captured["patient_id"] = patient_id
         return patient_taken
 
@@ -151,7 +157,11 @@ def test_get_availability_includes_patient_taken(monkeypatch):
 
 def test_get_availability_without_patient_id_skips_patient_query(monkeypatch):
     # patient_id 가 없으면 환자 축 조회를 아예 하지 않는다(불필요한 왕복 금지 + 기존 계약 보존).
-    monkeypatch.setattr(availability_db, "select_taken_slots", lambda doctor_id, start, end: [])
+    monkeypatch.setattr(
+        availability_db,
+        "select_taken_slots",
+        lambda doctor_id, start, end, exclude_appointment_id: [],
+    )
 
     def _fail(*args, **kwargs):
         raise AssertionError("patient_id 가 없으면 환자 축 db 를 건드리면 안 돼요.")
@@ -170,3 +180,73 @@ def test_get_availability_without_patient_id_skips_patient_query(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["patient_taken"] == []
+
+
+# --- Story 7.1 (FR-19): 자기 행 제외 ------------------------------------------------
+# 일정 변경 다이얼로그는 **그 예약 자신**의 슬롯을 taken 으로 그리면 안 된다 — 서버는
+# exclude_appointment_id 로 허용하는데 화면만 막으면 "시각 유지 + 의사만 변경"이 UI 에서
+# 불가능해진다(스토리 AC7). 두 축 **모두** 제외해야 한다: 환자 축(006 인덱스와 같은 판정
+# 범위)에도 자기 예약이 들어 있어 하나만 고치면 여전히 막힌다.
+
+
+def test_get_availability_threads_exclude_to_both_axes(monkeypatch):
+    captured: dict = {}
+
+    def fake_doctor_select(doctor_id, start, end, exclude_appointment_id):
+        captured["doctor_axis"] = exclude_appointment_id
+        return []
+
+    def fake_patient_select(patient_id, start, end, exclude_appointment_id):
+        captured["patient_axis"] = exclude_appointment_id
+        return []
+
+    monkeypatch.setattr(availability_db, "select_taken_slots", fake_doctor_select)
+    monkeypatch.setattr(availability_db, "select_patient_taken_slots", fake_patient_select)
+
+    client = TestClient(app)
+    resp = client.get(
+        "/availability",
+        params={
+            "doctor_id": 3,
+            "patient_id": 2,
+            "exclude_appointment_id": 10,
+            "start": "2026-08-01T00:00:00Z",
+            "end": "2026-08-02T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert captured["doctor_axis"] == 10
+    assert captured["patient_axis"] == 10
+
+
+def test_get_availability_exclude_defaults_to_none(monkeypatch):
+    # 미지정이면 None 이 전달돼 기존 판정과 동일하다 — 기존 호출자(환자 예약·대리 예약)는
+    # 이 파라미터를 보내지 않으므로 응답이 회귀 없이 같아야 한다.
+    captured: dict = {}
+
+    def fake_doctor_select(doctor_id, start, end, exclude_appointment_id):
+        captured["doctor_axis"] = exclude_appointment_id
+        return []
+
+    def fake_patient_select(patient_id, start, end, exclude_appointment_id):
+        captured["patient_axis"] = exclude_appointment_id
+        return []
+
+    monkeypatch.setattr(availability_db, "select_taken_slots", fake_doctor_select)
+    monkeypatch.setattr(availability_db, "select_patient_taken_slots", fake_patient_select)
+
+    client = TestClient(app)
+    resp = client.get(
+        "/availability",
+        params={
+            "doctor_id": 3,
+            "patient_id": 2,
+            "start": "2026-08-01T00:00:00Z",
+            "end": "2026-08-02T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert captured["doctor_axis"] is None
+    assert captured["patient_axis"] is None

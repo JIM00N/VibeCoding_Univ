@@ -54,11 +54,13 @@ uv run --with-requirements requirements.txt --no-project python -m uvicorn app.m
 **이 안전성은 "호출자가 리터럴을 넘긴다"는 관례에만 기대고 있다 — 강제하는 장치가 없다.**
 런타임에서 유도된 값(요청 파라미터·DB에서 읽은 값·f-string으로 만든 식)을 인자로 넘기면
 그 즉시 예약 충돌 게이트에 직접적인 SQL 구조 주입이 된다. 새 호출자를 추가할 땐 인자가 소스 리터럴인지 반드시 확인한다.
-(예정된 새 호출자는 **없다** — Story 5.3 워크인이 네 번째 호출자를 추가할 예정이었으나 2026-07-28 correct-course 로
-철회됐다: walk-in 접수는 기존 대리 예약 폼이 흡수해 백엔드 변경이 0이다. 즉 호출부가 6곳에서 늘어났다면 트립와이어가
-진짜로 울린 것이다.)
+(예정된 새 호출자는 **없다.** 후보였던 둘 다 호출부를 안 늘린다 — Story 5.3 워크인은 2026-07-28 correct-course 로
+철회됐고(대리 예약 폼이 흡수, 백엔드 변경 0), Story 7.1 일정 변경은 기존 호출자를 **교체**한다(아래 Epic 7 절).
+즉 호출부가 6곳에서 늘어났다면 트립와이어가 진짜로 울린 것이다.)
 
 값은 항상 psycopg 플레이스홀더로 바인딩한다(`%s` / `%(name)s`). 식별자·컬럼 참조만 정적으로 조립한다.
+
+**Epic 7(FR-19 일정 변경) 이후:** `_UPDATE_APPOINTMENT_DOCTOR`가 `_UPDATE_APPOINTMENT_SCHEDULE`로 **교체**된다(`PATCH …/doctor` 폐기 → `PATCH …/reschedule`). 호출자가 늘지 않는 **교체**라 위 숫자 6은 그대로다. 다만 넘기는 슬롯 식이 바뀐다 — 대상 행에서 유도하던 `"(select reserved_at from target)"` 대신 **요청된 새 시각 파라미터**(`"%(reserved_at)s"`)다. 여전히 소스 리터럴이므로 안전 관례는 유지되고, `GET /availability`의 `exclude_appointment_id` 확장도 기존 조각의 nullable 파라미터를 채우는 것뿐이라 새 호출자가 아니다.
 
 ## 확인 · 함정
 

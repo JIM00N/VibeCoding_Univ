@@ -183,28 +183,35 @@ _UPDATE_APPOINTMENT_STATUS = """
 """
 
 
-# 담당 의사 변경(Story 2.3, FR-7 P0 + Story 5.1 재검사) — doctor_id 만 UPDATE 하고 표시 필드를
-# 조인해 한 왕복으로 돌려준다. 두 겹의 원자 가드가 한 문장 안에 있다:
+# 예약 일정 변경(Story 7.1, FR-19 — Story 2.3 의 _UPDATE_APPOINTMENT_DOCTOR 를 대체).
+# doctor_id·reserved_at 두 컬럼을 UPDATE 하고 표시 필드를 조인해 한 왕복으로 돌려준다.
+# 세 겹의 원자 가드가 이 행에 걸린다(둘은 이 문 안, 하나는 DB 인덱스):
 # ① compare-and-set: `status = any(%(allowed_sources)s)`(대기·확정) — 검증과 UPDATE 사이 status
-#    경합에서도 부적격 재배정이 성립하지 않는다. 불일치 0행 → id null 행 → None(서비스가 CAS 409).
-# ② 가용성 재검사(FR-7 P1·AD-4): 새 의사(%(doctor_id)s)의 (의사, 슬롯) 점유를 taken CTE 가
-#    판정하고 `not slot_taken` 으로 게이트한다. 슬롯은 대상 행의 reserved_at 에서 SQL 이 직접
-#    유도(target CTE — prefetch 값 의존 제거), 자기 행은 %(exclude_appointment_id)s 로 제외한다.
-#    이전 슬롯 해제 + 새 슬롯 점유는 doctor_id 단일 UPDATE 로 원자 성립(점유가 행에서 유도되므로).
-# status·reserved_at·hospital_department_id 는 건드리지 않는다(AD-5, 과 이동 없음).
-_UPDATE_APPOINTMENT_DOCTOR = f"""
+#    경합에서도 부적격 변경이 성립하지 않는다. 불일치 0행 → id null 행 → None(서비스가 CAS 409).
+# ② 의사 축 가용성 재검사(FR-15·AD-4): 새 (의사, 슬롯) 점유를 taken CTE 가 판정하고
+#    `not slot_taken` 으로 게이트한다. 자기 행은 %(exclude_appointment_id)s 로 제외한다 —
+#    없으면 "시각 유지 + 의사만 변경"이 자기 자신과 충돌한다.
+#    ⚠️ 슬롯 식이 2.3 과 다르다: 2.3 은 reserved_at 을 안 바꿔 대상 행에서 유도했지만
+#    (`(select reserved_at from target)`), 7.1 은 **요청된 새 시각**(%(reserved_at)s)으로
+#    판정해야 한다 — 대상 행에서 유도하면 옛 시각의 충돌만 보고 새 시각을 검사하지 않는다.
+#    이전 슬롯 해제 + 새 슬롯 점유는 두 컬럼 단일 UPDATE 로 원자 성립한다.
+# ③ 환자 축(FR-15b)은 이 문에 없다 — 006 부분 유니크 인덱스가 UPDATE 에서 자동 발동해
+#    UniqueViolation 을 올린다(서비스가 _reject_unique_violation 으로 409 매핑).
+# target CTE 는 cas_ok 판정용으로 남는다(더 이상 reserved_at 을 유도하지 않는다).
+# status·hospital_department_id 는 건드리지 않는다(AD-5, 과 이동 없음).
+_UPDATE_APPOINTMENT_SCHEDULE = f"""
     with target as (
-        select reserved_at,
-               status = any(%(allowed_sources)s) as cas_ok
+        select status = any(%(allowed_sources)s) as cas_ok
         from public.appointment
         where id = %(appointment_id)s
     ),
     taken as (
-        select {slot_taken_sql("(select reserved_at from target)")} as slot_taken
+        select {slot_taken_sql("%(reserved_at)s")} as slot_taken
     ),
     updated as (
         update public.appointment
-        set doctor_id = %(doctor_id)s
+        set doctor_id = %(doctor_id)s,
+            reserved_at = %(reserved_at)s
         where id = %(appointment_id)s
           and status = any(%(allowed_sources)s)
           and not (select slot_taken from taken)
@@ -225,8 +232,8 @@ _UPDATE_APPOINTMENT_DOCTOR = f"""
 """
 
 
-def _interpret_doctor_update_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
-    """의사 변경 게이트 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상).
+def _interpret_schedule_update_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """일정 변경 게이트 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상).
 
     CAS 불일치(cas_ok=false)가 슬롯 충돌보다 **우선**한다(코드리뷰) — 이중 경합에서 슬롯 409 의
     "다른 의사를 선택해 주세요"는 따라도 성공할 수 없는 오도 안내가 되기 때문. 진짜 사유(status
@@ -293,7 +300,7 @@ def insert_appointment(
 
 
 def _interpret_auto_insert_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
-    """자동 배정 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상, _interpret_doctor_update_row 미러).
+    """자동 배정 문의 결과 행 해석(순수 함수 — 직접 단위 테스트 대상, _interpret_schedule_update_row 미러).
 
     free_found=false → 진료과 전 의사 점유(또는 빈 과 — 서비스 선검증이 구분) → NoFreeDoctorError.
     """
@@ -393,27 +400,41 @@ def update_appointment_status(
             return cur.fetchone()
 
 
-def update_appointment_doctor(
-    appointment_id: int, doctor_id: int, allowed_sources: tuple[str, ...]
+def update_appointment_schedule(
+    appointment_id: int,
+    doctor_id: int,
+    reserved_at: datetime,
+    allowed_sources: tuple[str, ...],
 ) -> dict[str, Any] | None:
-    """예약의 담당 의사를 CAS + 가용성 재검사(Story 5.1)로 갱신하고 표시 필드까지 조인해 반환한다.
+    """예약의 담당 의사·진료 시각을 CAS + 가용성 재검사로 갱신하고 표시 필드까지 조인해 반환한다.
 
-    새 의사가 그 슬롯에 이미 점유돼 있으면(자기 행 제외) SlotTakenError 를 올린다(서비스가
-    409 슬롯 문구로 매핑). status 경합(CAS 불일치)·없는 id 는 기존 계약 그대로 None(서비스가
-    CAS 409 로 매핑) — 두 409 는 문구로 구분된다. 시그니처·반환 계약은 2.3 그대로(슬롯은
-    SQL 이 대상 행에서 직접 유도, 자기 행 제외도 appointment_id 를 재사용).
+    호출자(서비스)는 **항상 두 값을 모두** 넘긴다 — 미지정 필드는 서비스가 현재 값으로 합성하므로
+    여기엔 분기가 없다(같은 값을 다시 써도 무해).
+
+    새 (의사, 슬롯)이 이미 점유돼 있으면(자기 행 제외) SlotTakenError 를 올린다(서비스가 409 슬롯
+    문구로 매핑). 그 환자가 새 슬롯에 이미 다른 활성 예약을 갖고 있으면 006 부분 유니크 인덱스가
+    UniqueViolation 을 올린다(서비스가 환자 축 409 로 매핑 — 이 문에는 그 조건이 없다).
+    status 경합(CAS 불일치)·없는 id 는 None(서비스가 CAS 409 로 매핑) — 세 409 는 문구로 구분된다.
     파라미터화 SQL(injection 방지).
     """
+    if doctor_id is None:
+        # insert_appointment 와 같은 이유의 형제 가드(코드리뷰): 게이트 조각의 `a.doctor_id = NULL`
+        # 비교는 항상 no-match 라 slot_taken 이 영구 false 가 되고, 충돌 검사가 통째로 무력화된 채
+        # 이미 찬 슬롯으로 이동이 통과한다. appointment.doctor_id 는 스키마상 nullable 이므로
+        # (앱이 항상 채우지만 DB 는 허용) db 계층에서도 명시 거부한다 — 커넥션을 열기 전에 실패해
+        # 테스트도 DB 없이 가능하다.
+        raise ValueError("update_appointment_schedule: doctor_id 없이는 충돌 게이트가 성립하지 않아요.")
     with get_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                _UPDATE_APPOINTMENT_DOCTOR,
+                _UPDATE_APPOINTMENT_SCHEDULE,
                 {
                     "appointment_id": appointment_id,
                     "doctor_id": doctor_id,
+                    "reserved_at": reserved_at,
                     "allowed_sources": list(allowed_sources),
                     "exclude_appointment_id": appointment_id,
                 },
             )
             row = cur.fetchone()
-    return _interpret_doctor_update_row(row)
+    return _interpret_schedule_update_row(row)

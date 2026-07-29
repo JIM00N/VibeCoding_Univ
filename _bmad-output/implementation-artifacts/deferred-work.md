@@ -60,7 +60,32 @@
 - **`UniqueViolation` catch가 위반 제약 이름 미확인** — `create_medical_record`의 except 블록이 모든 유니크 위반을 "이미 진료 기록이 있는 예약"(409)으로 매핑. 현재 `medical_record`의 유니크 제약은 부분 유니크 `uq_medical_record_appointment` 하나뿐(PK 는 identity)이라 실질 오분류 경로 없음. 유니크 제약이 추가되거나 OVERRIDING 삽입으로 시퀀스가 뒤처질 수 있게 되면 `exc.diag.constraint_name` 확인으로 정밀화(단, 손제작 예외의 diag 는 None 이라 테스트 페이크 방식 함께 조정 필요). [backend/app/services/medical_records.py:62-68]
 - **계약 테스트가 실 CTE/제약/timestamptz 미실행** — `test_medical_records.py`가 db 계층을 monkeypatch 해 SQL 회귀를 못 잡는 것은 2-3 리뷰에서 기록된 계약 테스트 아키텍처의 본질적 한계와 동일. 3.1의 실 보증은 라이브 Supabase curl 실증(원자성·중복 409 롤백 포함, dev-story Debug Log)으로 수행됨. [backend/tests/test_medical_records.py]
 
+## Deferred from: code review of 7-1-예약-일정-변경 (2026-07-29)
+
+- **환자 축으로 막힌 슬롯의 사유 안내가 환자 예약·대리 예약 화면에 없다** — 슬롯 셀은 두 축(그 의사가 찼다 / 이 환자가 이미 잡았다)을 구분 없이 `예약됨` 으로만 그린다(`slot-picker.tsx` 동결). 의사를 바꿔도 안 풀리는 칸이라 사유를 모르면 사용자가 의사만 계속 바꿔 보게 된다. Story 7.1 이 `[변경]` 다이얼로그에만 격자 아래 안내 한 줄을 넣었고(도달 빈도가 가장 높아서), 같은 갭이 `patient/book`·`proxy-booking-dialog` 에 남아 있다 — 둘 다 done 스토리라 7.1 승인 범위 밖. 처리 시 세 화면이 같은 안내를 쓰도록 공용화하는 게 자연스럽다(위 `revealField` 사본 건과 함께 볼 것). [frontend/app/patient/book/page.tsx · frontend/components/proxy-booking-dialog.tsx]
+
+- **`GET /availability` 의 `exclude_appointment_id` 무검증** — 그 예약이 조회 대상 의사·환자와 관련 있는지 확인하지 않는다. 남의 예약 id 를 넘기면 그 점유가 사전 표시에서 가려지고, 쓰기 게이트는 항상 자기 행만 제외하므로 제출 시 409 가 난다. 프런트는 항상 자기 id 를 보내고 최종 차단은 쓰기 게이트가 하므로 실피해는 "제출 후 409" 뿐. 서버측 소유권 검증(`fetch_appointment` 후 doctor_id·patient_id 대조)은 별도 작업. [backend/app/routers/availability.py:14-37 · backend/app/services/availability.py:31-38]
+- **환자 축 409 테스트가 제약 이름 확인을 실제로 검증 못 함** — 손제작 `UniqueViolation` 은 `exc.diag.constraint_name` 이 항상 None 이라 `_reject_unique_violation` 의 폴백 분기만 탄다. 테스트 안의 제약 이름 문자열은 장식이고, deferred-work 가 예고한 `(doctor_id, reserved_at)` 부분 유니크 추가 시 의사 충돌이 환자 문구로 오보되는 시나리오는 커버리지 0. `_reject_unique_violation` docstring 과 위 60행이 이미 인정한 알려진 한계(psycopg diag 는 서버 응답에서만 채워짐). 실 보증은 curl 실증. [backend/tests/test_appointments.py:1055-1078]
+- **`revealField` 두 번째 사본** — `frontend/components/proxy-booking-dialog.tsx:68-73` 과 바이트 동일한 5줄 헬퍼가 `reschedule-dialog.tsx:48-53` 에 복제됐다. 5.4 사본 수렴 규율 대상 — 공용 유틸(`lib/` 또는 `components/`) 승격 후보. Epic 5 회고 액션 #3(부채 순증 대응 방식) 의 실제 사례로 함께 볼 것. [frontend/components/reschedule-dialog.tsx:48-53]
+- **의사만 바꿔도 `reserved_at` 을 무조건 재작성** — `_UPDATE_APPOINTMENT_SCHEDULE` 이 항상 두 컬럼을 SET 하므로, 저장값이 30분 비정렬인 행이면 `to_slot()` floor 로 진료 시각이 최대 29분 앞당겨지고 006 인덱스 키까지 바뀐다(요청에 없던 변경). 006 헤더가 경고한 "앱 밖에서(SQL 에디터·데이터 보정·임포터) 비정시 오프셋 세션으로 넣은 행" 전제라 앱 경로로는 도달 불가. 근본 해결은 SET 을 조건부로 나누거나(문 2벌 = 게이트 사본) 비정렬 행을 마이그레이션으로 정규화하는 것. [backend/app/db/appointments.py:212-214]
+- **변경 경로에 `ForeignKeyViolation` 핸들러 없음** — 생성 경로(`create_appointment`·`_create_appointment_auto`)는 없는 의사·환자를 400 한국어로 매핑하는데 `set_appointment_schedule` 은 없어 원시 500 이 새어 나간다. 소속 검증 통과 후 그 의사 행이 삭제되는 경합 전제이고 참조 데이터는 시드 전용이라 도달성이 낮다. [backend/app/services/appointments.py:327-340]
+
 ## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
+
+> ✅ **2026-07-29 재평가 완료 (Story 7.1 done — 스코프 커밋의 약속 이행).** 7.1 이 `[의사 변경]` 다이얼로그를 `[변경]` 으로, `PATCH …/doctor` 를 `PATCH …/reschedule` 로 대체하면서 이 절의 6건이 갈렸다. **라인 번호는 7.1 이전 기준이라 아래 살아남은 항목 외에는 무효다.**
+>
+> **소멸 4건**(코드가 사라져 부채도 함께 사라짐 — 재확인 완료):
+> - `_UPDATE_APPOINTMENT_DOCTOR` 표시 조인 5번째 사본 → `_UPDATE_APPOINTMENT_SCHEDULE` 로 교체(사본 수는 그대로 5 — **소멸이 아니라 이월**. 아래 "살아남음" 참조)
+> - `runDoctorChange` 골격 중복 → 함수 삭제, 다이얼로그가 자체 제출 경로를 가짐
+> - `DoctorChangeDialog` 컴포넌트 추출 → **`components/reschedule-dialog.tsx` 신설로 이행 완료**
+> - 인플라이트 중 닫기 비대칭 → 새 다이얼로그는 `handleOpenChange` 가 `submittingRef` 로 저장 중 닫기를 막는다(해소)
+>
+> **살아남음 3건**(대상만 이동 — 아래 목록에서 계속 유효):
+> - 표시 조인 SQL 사본(개수 불변, 이름만 `_UPDATE_APPOINTMENT_SCHEDULE`)
+> - `renderActions` 분기 버튼 중복 — 버튼이 `[의사 변경]`→`[변경]` 으로 바뀌었을 뿐 대기/확정 분기의 중복 구조는 그대로
+> - 의사 목록 per-open 재요청 — 새 다이얼로그도 열 때마다 `getDoctors` 를 호출한다(remount 설계상 캐시하려면 부모 보유 필요)
+>
+> 나머지 항목(문구 dict · 404/409 블록 · 불변 단언 · 가드 pre-fetch)은 영향 없음. 7.1 코드리뷰가 새로 낸 defer 5건은 위 "code review of 7-1-예약-일정-변경" 절에 있다.
 
 - **표시 조인 SQL 5번째 사본** — `_UPDATE_APPOINTMENT_DOCTOR`가 projection 사본을 4→5개로 늘림. 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:103-120]
 - **프런트 뮤테이션 골격 중복** — `runDoctorChange`/`runStatusChange`가 재진입 가드→pendingId→행 교체→toast→실패 reloadNonce 골격 공유(~-14줄 여지). 로컬 `runMutation` 헬퍼 후보. [frontend/app/staff/appointments/page.tsx:179-221]

@@ -12,8 +12,8 @@ from app.db import refdata as refdata_db
 from app.db.availability import NoFreeDoctorError, SlotTakenError
 from app.schemas.appointments import (
     AppointmentCreate,
-    AppointmentDoctorUpdate,
     AppointmentOut,
+    AppointmentRescheduleUpdate,
     AppointmentStatusUpdate,
 )
 from app.slots import to_slot
@@ -29,9 +29,9 @@ _ALLOWED_SOURCE = {
     "취소": ("대기", "확정"),
 }
 
-# 담당 의사 변경(재배정)이 허용되는 출발 status — 대기·확정만(FR-7 P0).
-# 완료는 이미 진료가 끝났고, 취소는 무효라 재배정 대상이 아니다(에픽 AC·addendum A4 점유 대상과 일치).
-_DOCTOR_CHANGE_SOURCE = ("대기", "확정")
+# 일정 변경(의사·시각)이 허용되는 출발 status — 대기·확정만(FR-19, 2.3 의 재배정 범위 계승).
+# 완료는 이미 진료가 끝났고, 취소는 무효라 변경 대상이 아니다(에픽 AC·addendum A4 점유 대상과 일치).
+_SCHEDULE_CHANGE_SOURCE = ("대기", "확정")
 
 # CAS(compare-and-set) 경합 409 문구 정본(Story 5.4 수렴 — 2.2 원문 그대로, 계약 테스트가 고정).
 # 예약 서비스가 status 를 소유하므로(AD-5) 경합 문구도 여기 산다 — medical_records 가 import 한다.
@@ -116,7 +116,8 @@ def create_appointment(payload: AppointmentCreate) -> AppointmentOut:
 
     # Story 5.1 AC7: 과거 시각 서버 가드 — 프런트 필터·제출 재검증(표시·UX 층) 뒤의 최종 방어.
     # 슬롯 시작이 지난 진행 중 슬롯(예: 10:14 의 10:00)도 거부해 프런트 필터와 일관된다.
-    # 생성 전용 — 의사 변경은 reserved_at 을 바꾸지 않아 과거 예약 재배정을 막지 않는다.
+    # 일정 변경(Story 7.1)에도 같은 가드가 있으나 그쪽은 **시각이 실제로 바뀔 때만** 건다 —
+    # 과거 예약의 담당 의사만 바꾸는 요청은 계속 허용해야 하기 때문(AC6).
     # 자동 배정 분기보다 앞 — 과거 슬롯이면 db 를 일절 건드리지 않는다(가드 순서 계약).
     if slot < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="이미 지난 시간이에요. 다른 시간을 골라 주세요.")
@@ -236,7 +237,8 @@ def set_appointment_status(
     - 없는 예약은 404. 거부·검증 위반은 4xx + 문자열 {detail}(lib/api.ts 가 그대로 표시, AD-10).
 
     슬롯 점유/해제 로직은 여기 없다 — 취소는 status 전이만 하면 충돌 쿼리(db/availability.py,
-    Story 5.1)가 취소를 제외하므로 슬롯 해제가 자연히 성립한다. 재배정은 set_appointment_doctor 담당.
+    Story 5.1)가 취소를 제외하므로 슬롯 해제가 자연히 성립한다. 일정 변경(의사·시각)은
+    set_appointment_schedule 담당(Story 7.1 — 2.3 의 set_appointment_doctor 를 대체).
     """
     target = payload.status
     if target not in _CLIENT_SETTABLE_STATUS:
@@ -260,53 +262,98 @@ def set_appointment_status(
     return _to_appointment_out(row)
 
 
-def set_appointment_doctor(
-    appointment_id: int, payload: AppointmentDoctorUpdate
+def set_appointment_schedule(
+    appointment_id: int, payload: AppointmentRescheduleUpdate
 ) -> AppointmentOut:
-    """예약의 담당 의사를 같은 진료과의 다른 의사로 변경한다(FR-7 P0, 재배정).
+    """예약의 담당 의사·진료 시각을 한 번에 변경한다(FR-19, Story 7.1).
 
-    - 대기·확정 예약만 변경 가능(완료·취소는 400). status 는 어떤 경로에서도 바꾸지 않는다(AD-5).
-    - 새 의사는 존재해야 하고(400), 그 예약의 진료과 소속이어야 하며(400 — 2.1 문구 재사용),
-      현재 담당 의사와 달라야 한다(400). 과 이동(hospital_department_id 변경)은 스코프 밖.
-    - UPDATE 는 compare-and-set(대기·확정 조건) — 검증과 UPDATE 사이 status 경합에서도
-      부적격 재배정이 성립하지 않는다. 0행이면 409(2.2 와 동일 안내).
-    - (의사, 슬롯) 가용성 재검사(Story 5.1, FR-7 P1·AD-4): 새 의사의 점유를 자기 행 제외로
-      같은 문 안에서 검사, 충돌이면 409(CAS 409 와 문구로 구분). 이전 슬롯 해제 + 새 슬롯
-      점유는 doctor_id 단일 UPDATE 로 원자 성립한다.
+    Story 2.3 의 set_appointment_doctor 를 대체한다 — 같은 행·같은 컬럼을 놓고 두 경로가
+    경쟁하면 가용성 게이트가 두 벌이 되기 때문(제안서 §3.4).
+
+    두 필드 모두 선택이라 **유효값을 먼저 합성한다** — 미지정 필드는 현재 값으로 채워 db 문에
+    분기가 생기지 않게 한다. doctor_id 미지정은 5.2 의 자동 배정이 **아니라** "현재 의사 유지"다.
+
+    가드 순서(계약 — 테스트가 db 미호출로 고정한다):
+      ① 둘 다 미지정 → 400 (db 를 아예 건드리지 않는다)
+      ② 없는 예약 → 404
+      ③ 대기·확정 아님 → 400 (2.3 상태별 문구 계승)
+      ④ 무변경(의사·시각 둘 다 현재 값) → 400
+      ⑤ 의사 지정 시 소속 정합 검증 → 400 (2.1 문구 재사용, AD-6)
+      ⑥ **시각이 실제로 바뀔 때만** 과거 가드 → 400 (생성 경로와 바이트 동일 문구)
+      ⑦ UPDATE — SlotTakenError → 409(의사 축) · UniqueViolation → 409(환자 축) · 0행 → CAS 409
+
+    ⑥이 조건부인 이유(2.3 회귀 방지): 의사 변경은 reserved_at 을 안 바꿔 과거 예약도 재배정할
+    수 있었다. 무조건 걸면 그 동작이 깨진다(테스트가 고정 중).
     """
-    current = fetch_appointment_or_404(appointment_id)
-
-    if current["status"] not in _DOCTOR_CHANGE_SOURCE:
-        if current["status"] == "완료":
-            detail = "완료된 예약은 담당 의사를 바꿀 수 없어요."
-        elif current["status"] == "취소":
-            detail = "취소된 예약은 담당 의사를 바꿀 수 없어요."
-        else:
-            detail = "이 예약은 담당 의사를 바꿀 수 없어요."
-        raise HTTPException(status_code=400, detail=detail)
-
-    # AD-6: 의사↔진료과 소속 정합을 앱이 검증(2.1 create_appointment 와 같은 함수·문구).
-    _require_doctor_in_department(payload.doctor_id, current["hospital_department_id"])
-
-    # 에픽 AC: "같은 진료과의 **다른** 의사" — 같은 의사로의 변경은 무의미라 거부.
-    if payload.doctor_id == current["doctor_id"]:
+    if payload.doctor_id is None and payload.reserved_at is None:
         raise HTTPException(
             status_code=400,
-            detail="이미 담당하고 있는 의사예요. 다른 의사를 선택해 주세요.",
+            detail="바꿀 내용을 지정해 주세요. 담당 의사나 진료 시간 중 하나는 있어야 해요.",
         )
 
+    current = fetch_appointment_or_404(appointment_id)
+
+    if current["status"] not in _SCHEDULE_CHANGE_SOURCE:
+        if current["status"] == "완료":
+            detail = "완료된 예약은 일정을 바꿀 수 없어요."
+        elif current["status"] == "취소":
+            detail = "취소된 예약은 일정을 바꿀 수 없어요."
+        else:
+            detail = "이 예약은 일정을 바꿀 수 없어요."
+        raise HTTPException(status_code=400, detail=detail)
+
+    # 유효값 합성 — 미지정은 현재 값 유지. 시각은 30분 격자로 floor 해 003 CHECK 를 통과시킨다
+    # (AD-3: 저장 형태에 의존하지 않고 양변을 같은 식으로 정규화한다).
+    doctor_id = payload.doctor_id if payload.doctor_id is not None else current["doctor_id"]
+    slot = to_slot(payload.reserved_at if payload.reserved_at is not None else current["reserved_at"])
+
+    # 무엇이 실제로 바뀌는지 — **정규화 후** 비교한다. 원시 payload 와 DB 값을 직접 비교하면
+    # tz 표기·마이크로초 차이로 "안 바뀌었는데 바뀐 것"이 된다. 이 두 플래그가 아래 무변경 거부와
+    # 과거 가드의 **공통 판정**이다(따로 판정하면 "같은 과거 시각을 그대로 실어 보내기"에서 어긋난다).
+    doctor_changed = doctor_id != current["doctor_id"]
+    time_changed = slot != to_slot(current["reserved_at"])
+
+    # 무변경 거부(AC2). 2.3 의 "이미 담당하고 있는 의사예요"(같은 의사 400)는 여기로 대체됐다 —
+    # 의사를 그대로 두고 시각만 바꾸는 것이 정당한 요청이 됐기 때문(변경 다이얼로그가 현재 의사를
+    # 기본 선택으로 보낸다).
+    if not doctor_changed and not time_changed:
+        raise HTTPException(
+            status_code=400,
+            detail="바뀐 내용이 없어요. 담당 의사나 진료 시간을 바꿔 주세요.",
+        )
+
+    # AD-6: 의사↔진료과 소속 정합을 앱이 검증(2.1 create_appointment 와 같은 함수·문구).
+    # 의사를 안 바꾸면 검증할 게 없다 — 현재 의사는 이미 그 과 소속이다(불필요한 왕복 방지).
+    if payload.doctor_id is not None:
+        _require_doctor_in_department(payload.doctor_id, current["hospital_department_id"])
+
+    # 과거 시각 가드 — **시각이 실제로 바뀔 때만**(위 docstring ⑥). 생성 경로와 바이트 동일 문구.
+    # ⚠️ `payload.reserved_at is not None` 이 아니라 `time_changed` 로 판정한다(코드리뷰) — 전자면
+    # 과거 예약의 기존 시각을 그대로 실어 의사만 바꾸는 요청이 400 으로 막힌다. 2.3 은 reserved_at 을
+    # 아예 안 바꿔 과거 예약도 재배정할 수 있었고, AC6 이 그 동작 보존을 "실제로 바뀔 때만"으로 못박았다.
+    if time_changed and slot < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="이미 지난 시간이에요. 다른 시간을 골라 주세요.")
+
     try:
-        row = appointments_db.update_appointment_doctor(
-            appointment_id, payload.doctor_id, _DOCTOR_CHANGE_SOURCE
+        row = appointments_db.update_appointment_schedule(
+            appointment_id, doctor_id, slot, _SCHEDULE_CHANGE_SOURCE
         )
     except SlotTakenError as exc:
-        # Story 5.1(FR-7 P1): 새 의사가 그 슬롯에 이미 점유 — CAS 409 와 문구로 구분되는 409.
+        # Story 5.1(FR-15): 새 (의사, 슬롯)이 이미 점유 — CAS 409 와 문구로 구분되는 409.
+        # 2.3 문구("…다른 의사를 선택해 주세요")를 **축 중립으로 갱신**했다(코드리뷰 + 사용자 결정):
+        # 7.1 은 시각도 바꿀 수 있어 "의사 유지 + 시각만 변경"이 충돌할 수 있는데, 그때 의사만
+        # 고르라는 안내는 따라도 성공할 수 없다. 화면도 그 셀을 taken 으로 찍고 시간 선택을
+        # 해제하므로(= 다른 시간을 고르라는 행동) 문구와 UI 가 어긋나던 것을 함께 맞춘다.
         raise HTTPException(
             status_code=409,
-            detail="이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요.",
+            detail="이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요.",
         ) from exc
+    except UniqueViolation as exc:
+        # 006 부분 유니크 인덱스는 INSERT 전용이 아니다 — 그 환자가 새 슬롯에 이미 활성 예약을
+        # 갖고 있으면 UPDATE 도 거부된다. 매핑은 생성 경로와 같은 함수(제약 이름 확인 포함).
+        _reject_unique_violation(exc)
     if row is None:
-        # 검증과 UPDATE 사이에 status 가 완료/취소로 바뀐 경합 — CAS 가드가 재배정을 막았다.
+        # 검증과 UPDATE 사이에 status 가 완료/취소로 바뀐 경합 — CAS 가드가 변경을 막았다.
         raise HTTPException(status_code=409, detail=CAS_CONFLICT_DETAIL)
     return _to_appointment_out(row)
 

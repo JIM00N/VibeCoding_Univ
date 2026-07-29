@@ -13,7 +13,11 @@ router = APIRouter(tags=["availability"])
 
 @router.get("/availability", response_model=AvailabilityOut)
 def get_availability(
-    doctor_id: int, start: datetime, end: datetime, patient_id: int | None = None
+    doctor_id: int,
+    start: datetime,
+    end: datetime,
+    patient_id: int | None = None,
+    exclude_appointment_id: int | None = None,
 ) -> AvailabilityOut:
     """한 의사의 [start, end) 점유 슬롯 목록(Story 5.1, FR-15) — 슬롯 피커 taken 사전 표시용.
 
@@ -23,5 +27,11 @@ def get_availability(
 
     patient_id 는 **선택**(FR-15b, 2026-07-28 chore) — 주면 그 환자가 이미 잡은 활성 슬롯을
     patient_taken 으로 함께 돌려준다. 기존 호출자는 무수정 호환(빈 배열).
+
+    exclude_appointment_id 도 **선택**(FR-19, Story 7.1) — 주면 그 예약 자신을 **두 축 모두**
+    에서 제외한다. 일정 변경 화면이 자기가 점유한 슬롯을 taken 으로 그리면 "시각 유지 + 의사만
+    변경"이 UI 에서 막히기 때문. 미지정이면 기존 응답과 동일하다(기존 호출자 무수정 호환).
     """
-    return availability_service.get_taken_slots(doctor_id, start, end, patient_id)
+    return availability_service.get_taken_slots(
+        doctor_id, start, end, patient_id, exclude_appointment_id
+    )

@@ -604,31 +604,39 @@ def test_patch_missing_status_returns_422():
     assert resp.status_code == 422
 
 
-# --- Story 2.3: PATCH /appointments/{id}/doctor (담당 의사 변경) ----------------
+# --- Story 7.1: PATCH /appointments/{id}/reschedule (일정 변경 = 의사 + 시각) --------
+# Story 2.3 의 PATCH /appointments/{id}/doctor 를 **대체**한다(폐기 — 제안서 §3.4).
+# 아래 블록은 2.3 테스트의 이관본이다: 경로·페이로드만 바뀌고 의도는 보존된다. 세 건은
+# 계약 자체가 바뀌어 의도를 새로 쓴다(같은 의사 400 → 무변경 400 · 필수 422 → 서비스 400).
 
 
-def test_change_doctor_on_pending_appointment(monkeypatch):
-    # AC1/AC3: 대기 예약의 담당 의사 변경 — doctor_id 만 갱신, status 불변, 정규 모델 반환.
-    monkeypatch.setattr(
-        appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
-    )
+def _resched_row(**over):
+    """미래 슬롯을 가진 예약 행 — 시각 변경 테스트용(_fake_row 기본은 과거다)."""
+    return _fake_row(reserved_at=_future_at(1, 30), **over)
+
+
+def test_reschedule_doctor_only_on_pending_appointment(monkeypatch):
+    # AC1/AC2: 대기 예약의 의사만 변경 — 시각은 현재 값 유지, status 불변, 정규 모델 반환.
+    current = _fake_row(id=10, status="대기")
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: current)
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
     captured: dict = {}
 
-    def fake_update(appointment_id, doctor_id, allowed_sources):
-        captured["args"] = (appointment_id, doctor_id)
+    def fake_update(appointment_id, doctor_id, reserved_at, allowed_sources):
+        captured["args"] = (appointment_id, doctor_id, reserved_at)
         captured["allowed"] = allowed_sources
         return _fake_row(
             id=appointment_id, status="대기", doctor_id=doctor_id, doctor_name="박서연"
         )
 
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", fake_update)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", fake_update)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 200
-    assert captured["args"] == (10, 4)
+    # 시각 미지정 → 현재 값을 그대로 다시 쓴다(SQL 분기 없음 — 서비스가 유효값을 합성).
+    assert captured["args"] == (10, 4, current["reserved_at"])
     # compare-and-set: 대기·확정에서만 변경 허용 → UPDATE 에 그 출발 status 들이 전달된다.
     assert "대기" in captured["allowed"] and "확정" in captured["allowed"]
     data = resp.json()
@@ -640,22 +648,99 @@ def test_change_doctor_on_pending_appointment(monkeypatch):
     assert data["hospital_department_id"] == 2
 
 
-def test_change_doctor_on_confirmed_appointment(monkeypatch):
-    # AC1: 확정 예약도 담당 의사 변경 가능(대기·확정만).
+def test_reschedule_time_only_keeps_current_doctor(monkeypatch):
+    # AC2 신규: 시각만 변경 — 의사는 현재 값 유지. doctor_id 미지정은 "자동 배정"이 아니다(5.2 는
+    # 생성 전용). 의사가 안 바뀌므로 소속 검증 db 호출도 없어야 한다.
+    current = _fake_row(id=10, status="확정", doctor_id=3)
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: current)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    captured: dict = {}
+
+    def fake_update(appointment_id, doctor_id, reserved_at, allowed_sources):
+        captured["args"] = (appointment_id, doctor_id, reserved_at)
+        return _fake_row(id=appointment_id, status="확정", doctor_id=doctor_id,
+                         reserved_at=reserved_at)
+
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", fake_update)
+
+    new_at = _future_at(4, 0)
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"reserved_at": new_at.isoformat().replace("+00:00", "Z")},
+    )
+
+    assert resp.status_code == 200
+    assert captured["args"] == (10, 3, new_at)
+    assert resp.json()["status"] == "확정"
+
+
+def test_reschedule_both_fields_at_once(monkeypatch):
+    # AC1/AC2: 의사와 시각을 한 요청에서 함께 바꾼다(한 SQL 문 — 부분 실패 없음).
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _resched_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    captured: dict = {}
+
+    def fake_update(appointment_id, doctor_id, reserved_at, allowed_sources):
+        captured["args"] = (appointment_id, doctor_id, reserved_at)
+        return _fake_row(id=appointment_id, doctor_id=doctor_id, reserved_at=reserved_at)
+
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", fake_update)
+
+    new_at = _future_at(5, 30)
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"doctor_id": 4, "reserved_at": new_at.isoformat().replace("+00:00", "Z")},
+    )
+
+    assert resp.status_code == 200
+    assert captured["args"] == (10, 4, new_at)
+
+
+def test_reschedule_floors_reserved_at_to_30min_grid(monkeypatch):
+    # AC1: 비정렬 입력은 to_slot 으로 floor 해야 003 의 reserved_at 30분 CHECK 를 통과한다
+    # (2.1 생성 경로와 같은 규약, AD-3). floor 없이 원시값을 쓰면 원시 DB 에러가 난다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda aid: _resched_row(id=aid, status="대기")
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
+    captured: dict = {}
+
+    def fake_update(appointment_id, doctor_id, reserved_at, allowed_sources):
+        captured["at"] = reserved_at
+        return _fake_row(id=appointment_id, reserved_at=reserved_at)
+
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", fake_update)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"reserved_at": _future_iso(6, 47, 13)},
+    )
+
+    assert resp.status_code == 200
+    assert captured["at"] == _future_at(6, 30)
+
+
+def test_reschedule_on_confirmed_appointment(monkeypatch):
+    # AC1: 확정 예약도 변경 가능(대기·확정만).
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="확정")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
     monkeypatch.setattr(
         appointments_db,
-        "update_appointment_doctor",
-        lambda aid, did, srcs: _fake_row(
+        "update_appointment_schedule",
+        lambda aid, did, at, srcs: _fake_row(
             id=aid, status="확정", doctor_id=did, doctor_name="박서연"
         ),
     )
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -663,136 +748,190 @@ def test_change_doctor_on_confirmed_appointment(monkeypatch):
     assert data["status"] == "확정"
 
 
-def test_change_doctor_unknown_appointment_returns_404(monkeypatch):
+def test_reschedule_unknown_appointment_returns_404(monkeypatch):
     # 없는 예약 → fetch_appointment None → 404. 의사 조회·update 호출 금지.
     monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: None)
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/999/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/999/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 404
     assert isinstance(resp.json()["detail"], str)
 
 
-def test_change_doctor_completed_rejected(monkeypatch):
-    # AC3: 완료 예약은 담당 의사 변경 불가 → 400. 의사 조회·update 호출 금지.
+def test_reschedule_completed_rejected(monkeypatch):
+    # AC3: 완료 예약은 변경 불가 → 400(2.3 문구 계승). 의사 조회·update 호출 금지.
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="완료")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 400
     assert "완료" in resp.json()["detail"]
 
 
-def test_change_doctor_cancelled_rejected(monkeypatch):
+def test_reschedule_cancelled_rejected(monkeypatch):
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="취소")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 400
     assert "취소" in resp.json()["detail"]
 
 
-def test_change_doctor_unknown_doctor_rejected(monkeypatch):
+def test_reschedule_unknown_doctor_rejected(monkeypatch):
     # 없는 의사 → fetch_doctor_department None → 400(2.1 문구 재사용). update 호출 금지.
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: None)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 999})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 999})
 
     assert resp.status_code == 400
     assert isinstance(resp.json()["detail"], str)
 
 
-def test_change_doctor_wrong_department_rejected(monkeypatch):
+def test_reschedule_wrong_department_rejected(monkeypatch):
     # 다른 진료과 의사(소속 1 ≠ 예약 진료과 2) → 400 "진료과"(2.1 문구 재사용). update 호출 금지.
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 1)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 5})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 5})
 
     assert resp.status_code == 400
     assert "진료과" in resp.json()["detail"]
 
 
-def test_change_doctor_same_doctor_rejected(monkeypatch):
-    # 현재 담당 의사(3)와 같은 의사로 변경 시도 → 400 "다른 의사". update 호출 금지.
+def test_reschedule_no_change_rejected(monkeypatch):
+    # AC2 **계약 변경**: 2.3 의 "이미 담당하고 있는 의사예요"(같은 의사 400)는 제거됐다 —
+    # 의사를 그대로 두고 시각만 바꾸는 것이 정당한 요청이 됐기 때문. 대신 **둘 다 그대로**면
+    # 400 으로 막는다. 의사가 안 바뀌었으므로 소속 검증도 update 도 호출되면 안 된다.
+    current = _fake_row(id=10, status="대기", doctor_id=3)
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda aid: current)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={
+            "doctor_id": 3,
+            "reserved_at": current["reserved_at"].isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "바뀐 내용이 없어요. 담당 의사나 진료 시간을 바꿔 주세요."
+
+
+def test_reschedule_same_doctor_with_new_time_succeeds(monkeypatch):
+    # AC2: 같은 의사를 명시적으로 보내도 **시각이 바뀌면** 성립한다 — 2.3 이 막던 조합이
+    # 이제 정상 경로다(변경 다이얼로그가 현재 의사를 기본 선택으로 보내기 때문).
     monkeypatch.setattr(
         appointments_db,
         "fetch_appointment",
         lambda aid: _fake_row(id=aid, status="대기", doctor_id=3),
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    captured: dict = {}
 
+    def fake_update(appointment_id, doctor_id, reserved_at, allowed_sources):
+        captured["args"] = (doctor_id, reserved_at)
+        return _fake_row(id=appointment_id, doctor_id=doctor_id, reserved_at=reserved_at)
+
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", fake_update)
+
+    new_at = _future_at(7, 0)
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 3})
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"doctor_id": 3, "reserved_at": new_at.isoformat().replace("+00:00", "Z")},
+    )
 
-    assert resp.status_code == 400
-    assert "다른 의사" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert captured["args"] == (3, new_at)
 
 
-def test_change_doctor_race_returns_409(monkeypatch):
+def test_reschedule_race_returns_409(monkeypatch):
     # 경합: fetch 시점엔 대기지만 CAS UPDATE 가 0행(None) — 그 사이 완료/취소로 바뀜 → 409.
     monkeypatch.setattr(
         appointments_db, "fetch_appointment", lambda aid: _fake_row(id=aid, status="대기")
     )
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda doctor_id: 2)
     monkeypatch.setattr(
-        appointments_db, "update_appointment_doctor", lambda aid, did, srcs: None
+        appointments_db, "update_appointment_schedule", lambda aid, did, at, srcs: None
     )
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 409
     assert isinstance(resp.json()["detail"], str)
 
 
-def test_change_doctor_missing_doctor_id_returns_422():
-    # doctor_id 누락 → Pydantic 필수 검증(422, 2.2 의 status 누락과 동일 계약).
+def test_reschedule_empty_body_returns_400(monkeypatch):
+    # AC2 **계약 변경**: 2.3 은 doctor_id 필수라 누락이 422(Pydantic)였다. 7.1 은 둘 다
+    # 선택이라 빈 요청이 스키마를 통과하므로, **서비스가 400 한국어**로 막는다 — 422 리스트
+    # detail 은 lib/api.ts 가 일반 메시지로 바꿔 버려 직원이 이유를 못 본다(AD-10).
+    # 가드는 fetch 보다 앞이라 db 는 일절 호출되면 안 된다.
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
+
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={})
-    assert resp.status_code == 422
+    resp = client.patch("/appointments/10/reschedule", json={})
+
+    assert resp.status_code == 400
+    assert isinstance(resp.json()["detail"], str)
 
 
-def test_change_doctor_rejects_extra_status_field(monkeypatch):
-    # 엔드포인트 분리 고정(AD-5): /doctor 에 status 를 동봉하면 조용히 무시하지 않고 422 로 거부.
+def test_reschedule_rejects_extra_status_field(monkeypatch):
+    # 엔드포인트 분리 고정(AD-5): /reschedule 에 status 를 동봉하면 조용히 무시하지 않고 422.
     # (extra="forbid" — 호출자가 "완료 전이도 됐다"고 오인하는 조용한 의도 유실 차단.) db 미호출.
     monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
 
     client = TestClient(app)
     resp = client.patch(
-        "/appointments/10/doctor", json={"doctor_id": 4, "status": "완료"}
+        "/appointments/10/reschedule", json={"doctor_id": 4, "status": "완료"}
     )
 
     assert resp.status_code == 422
 
 
+def test_doctor_endpoint_is_gone(monkeypatch):
+    # AC9: 폐기 완결 — 옛 경로는 라우트가 없어 404(FastAPI 기본). 살아 있으면 두 게이트가
+    # 같은 행을 놓고 경쟁하는 사본이 된다(Story 5.4 가 없앤 종류).
+    monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
+
+    client = TestClient(app)
+    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+
+    assert resp.status_code == 404
+    assert not hasattr(appointments_db, "update_appointment_doctor")
+
+
 def test_patch_status_rejects_extra_doctor_id_field(monkeypatch):
-    # 역방향 고정: 상태 전이 라우트에 doctor_id 를 동봉하면 422 — 재배정은 /doctor 경로만 담당.
+    # 역방향 고정: 상태 전이 라우트에 doctor_id 를 동봉하면 422 — 일정 변경은 /reschedule 만 담당.
     monkeypatch.setattr(appointments_db, "fetch_appointment", _fail)
     monkeypatch.setattr(appointments_db, "update_appointment_status", _fail)
 
@@ -890,8 +1029,8 @@ def test_create_appointment_past_slot_returns_400_without_db(monkeypatch):
     assert resp.json()["detail"] == "이미 지난 시간이에요. 다른 시간을 골라 주세요."
 
 
-def test_change_doctor_slot_conflict_returns_409_with_doctor_message(monkeypatch):
-    # 새 의사가 그 슬롯에 이미 점유 → 409. CAS 409("예약 상태가 방금 바뀌었어요…")와 문구로 구분.
+def test_reschedule_slot_conflict_returns_409_with_doctor_message(monkeypatch):
+    # 새 (의사, 슬롯)이 이미 점유 → 409. CAS 409("예약 상태가 방금 바뀌었어요…")와 문구로 구분.
     monkeypatch.setattr(
         appointments_db,
         "fetch_appointment",
@@ -902,20 +1041,53 @@ def test_change_doctor_slot_conflict_returns_409_with_doctor_message(monkeypatch
     def taken_update(*args, **kwargs):
         raise SlotTakenError()
 
-    monkeypatch.setattr(appointments_db, "update_appointment_doctor", taken_update)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", taken_update)
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    assert detail == "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail == "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
     assert detail != "예약 상태가 방금 바뀌었어요. 목록을 새로고침한 뒤 다시 확인해 주세요."
 
 
-def test_change_doctor_past_appointment_still_allowed(monkeypatch):
-    # 과거 시각 가드는 생성 전용(AC7) — 의사 변경은 reserved_at 을 바꾸지 않으므로 과거 예약도
-    # 재배정 가능해야 한다(_fake_row 기본 reserved_at 은 과거). db 시그니처도 기존 그대로임을 고정.
+def test_reschedule_patient_slot_conflict_returns_409(monkeypatch):
+    # AC5: 그 환자가 **새 슬롯**에 이미 다른 활성 예약을 갖고 있으면 006 부분 유니크 인덱스가
+    # UPDATE 를 거부한다(인덱스는 INSERT 전용이 아니다). 매핑은 생성 경로와 **같은 함수**
+    # (_reject_unique_violation — 제약 이름 확인 포함)라 문구가 바이트 동일해야 한다.
+    from psycopg.errors import UniqueViolation
+
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda i: _fake_row(status="대기", doctor_id=3)
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
+
+    def dup_update(*args, **kwargs):
+        raise UniqueViolation(
+            'duplicate key value violates unique constraint "uq_appointment_patient_slot"'
+        )
+
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", dup_update)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule", json={"reserved_at": _future_iso(9, 0)}
+    )
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail == "이 환자는 그 시간에 이미 다른 예약이 있어요. 다른 시간을 골라 주세요."
+    # 슬롯 관련 기존 409 셋 모두와 달라야 한다(주어가 "환자"임을 밝히는 문구 — 코드리뷰 High).
+    assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
+
+
+def test_reschedule_past_appointment_doctor_only_still_allowed(monkeypatch):
+    # AC6 **회귀 가드**: 과거 시각 가드는 `reserved_at` 이 실제로 올 때만 적용한다.
+    # 2.3 이 고정했던 "과거 예약의 의사 변경 허용"이 7.1 에서도 살아 있어야 한다
+    # (_fake_row 기본 reserved_at 은 과거). 가드를 무조건 걸면 이 테스트가 깨진다.
     monkeypatch.setattr(
         appointments_db,
         "fetch_appointment",
@@ -924,17 +1096,96 @@ def test_change_doctor_past_appointment_still_allowed(monkeypatch):
     monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
     monkeypatch.setattr(
         appointments_db,
-        "update_appointment_doctor",
-        lambda appointment_id, doctor_id, allowed_sources: _fake_row(
+        "update_appointment_schedule",
+        lambda appointment_id, doctor_id, reserved_at, allowed_sources: _fake_row(
             doctor_id=doctor_id, doctor_name="박서연"
         ),
     )
 
     client = TestClient(app)
-    resp = client.patch("/appointments/10/doctor", json={"doctor_id": 4})
+    resp = client.patch("/appointments/10/reschedule", json={"doctor_id": 4})
 
     assert resp.status_code == 200
     assert resp.json()["doctor_id"] == 4
+
+
+def test_reschedule_past_appointment_same_time_explicitly_sent_is_allowed(monkeypatch):
+    # AC6 코드리뷰: 가드 판정이 `payload.reserved_at is not None` 이면, 과거 예약의 **기존 시각을
+    # 그대로 실어** 의사만 바꾸는 요청이 400 으로 막힌다. 판정은 "실제로 바뀌었는가"여야 한다.
+    # (프런트는 보통 바뀐 필드만 보내지만 API 계약이 payload 형태에 의존하면 안 된다.)
+    current = _fake_row(status="대기", doctor_id=3)  # 기본 reserved_at 은 과거
+    monkeypatch.setattr(appointments_db, "fetch_appointment", lambda i: current)
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 2)
+    monkeypatch.setattr(
+        appointments_db,
+        "update_appointment_schedule",
+        lambda aid, did, at, srcs: _fake_row(doctor_id=did, reserved_at=at),
+    )
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={
+            "doctor_id": 4,
+            "reserved_at": current["reserved_at"].isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["doctor_id"] == 4
+
+
+def test_reschedule_wrong_department_precedes_past_guard(monkeypatch):
+    # 가드 순서 계약 고정(코드리뷰): ⑤ 소속 검증이 ⑥ 과거 가드보다 **앞**이다. 둘 다 걸리는
+    # 요청(다른 과 의사 + 과거 시각)에서 소속 400 이 나와야 한다 — 이전 주석은 순서를 거꾸로
+    # 적어 놓고, payload 에 doctor_id 가 없어 도달하지 않는 조합으로만 초록이었다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda i: _fake_row(status="대기", doctor_id=3)
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", lambda d: 1)  # 다른 과
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"doctor_id": 5, "reserved_at": "2026-07-20T10:00:00Z"},
+    )
+
+    assert resp.status_code == 400
+    assert "진료과" in resp.json()["detail"]
+    assert resp.json()["detail"] != "이미 지난 시간이에요. 다른 시간을 골라 주세요."
+
+
+def test_update_appointment_schedule_rejects_none_doctor_id():
+    # 코드리뷰: 형제 함수 insert_appointment 와 같은 가드. NULL doctor_id 는 게이트 조각의
+    # `a.doctor_id = NULL` 비교를 항상 no-match 로 만들어 충돌 검사를 통째로 무력화한다
+    # (appointment.doctor_id 는 스키마상 nullable). 커넥션을 열기 전에 거부한다.
+    with pytest.raises(ValueError):
+        appointments_db.update_appointment_schedule(
+            10, None, datetime(2026, 8, 1, 1, 0, tzinfo=timezone.utc), ("대기", "확정")
+        )
+
+
+def test_reschedule_to_past_slot_returns_400_without_db(monkeypatch):
+    # AC6: 새 시각이 이미 지났으면 400 — 생성 경로(create_appointment)와 **바이트 동일 문구**.
+    # 가드는 UPDATE 보다 앞이라 update 는 호출되면 안 된다. ⚠️ 의사 소속 검증(⑤)은 이 가드(⑥)
+    # **앞**이다 — 이 요청은 doctor_id 를 안 보내 소속 검증이 스킵될 뿐이다(코드리뷰: 이전 주석이
+    # 순서를 거꾸로 적어 성립하지 않는 계약을 고정하고 있었다). doctor_id 를 함께 보내는 조합은
+    # 아래 test_reschedule_wrong_department_rejected 가 소속 400 우선을 고정한다.
+    monkeypatch.setattr(
+        appointments_db, "fetch_appointment", lambda i: _fake_row(status="대기", doctor_id=3)
+    )
+    monkeypatch.setattr(appointments_db, "fetch_doctor_department", _fail)
+    monkeypatch.setattr(appointments_db, "update_appointment_schedule", _fail)
+
+    client = TestClient(app)
+    resp = client.patch(
+        "/appointments/10/reschedule",
+        json={"reserved_at": "2026-07-20T10:00:00Z"},  # 고정 과거 — 의도된 입력
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "이미 지난 시간이에요. 다른 시간을 골라 주세요."
 
 
 def test_insert_appointment_rejects_none_doctor_id():
@@ -946,25 +1197,25 @@ def test_insert_appointment_rejects_none_doctor_id():
         )
 
 
-def test_doctor_update_interpretation_prefers_cas_over_slot_conflict():
+def test_schedule_update_interpretation_prefers_cas_over_slot_conflict():
     # 코드리뷰: CAS 불일치 + 슬롯 충돌 이중 경합 → None(CAS 409 경로) 우선 — 슬롯 409 의
     # "다른 의사를 선택해 주세요"는 이 경우 따라도 성공할 수 없는 오도 안내이기 때문.
     assert (
-        appointments_db._interpret_doctor_update_row(
+        appointments_db._interpret_schedule_update_row(
             {"slot_taken": True, "cas_ok": False, "id": None}
         )
         is None
     )
 
 
-def test_doctor_update_interpretation_slot_conflict_and_success_paths():
+def test_schedule_update_interpretation_slot_conflict_and_success_paths():
     # CAS 통과 + 슬롯 충돌 → SlotTakenError(서비스가 슬롯 409 로 매핑).
     with pytest.raises(SlotTakenError):
-        appointments_db._interpret_doctor_update_row(
+        appointments_db._interpret_schedule_update_row(
             {"slot_taken": True, "cas_ok": True, "id": None}
         )
     # 정상 갱신 행은 해석 플래그 2개(slot_taken·cas_ok)를 벗겨 기존 행 계약 그대로 돌려준다.
-    row = appointments_db._interpret_doctor_update_row(
+    row = appointments_db._interpret_schedule_update_row(
         {"slot_taken": False, "cas_ok": True, "id": 10, "doctor_id": 4}
     )
     assert row == {"id": 10, "doctor_id": 4}
@@ -1066,7 +1317,7 @@ def test_create_appointment_auto_all_taken_returns_409(monkeypatch):
     detail = resp.json()["detail"]
     assert detail == "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
     assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
-    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
 
 
 def test_create_appointment_auto_empty_department_returns_400(monkeypatch):
@@ -1133,7 +1384,7 @@ def test_create_appointment_doctor_zero_uses_existing_validation_path(monkeypatc
 
 
 def test_auto_insert_interpretation_paths():
-    # 자동 배정 문 결과 해석(순수 함수 — _interpret_doctor_update_row 미러, DB 불필요).
+    # 자동 배정 문 결과 해석(순수 함수 — _interpret_schedule_update_row 미러, DB 불필요).
     # 빈 의사 없음(free_found=false) → NoFreeDoctorError(서비스가 409 로 매핑).
     with pytest.raises(NoFreeDoctorError):
         appointments_db._interpret_auto_insert_row({"free_found": False, "id": None})
@@ -1217,7 +1468,7 @@ def test_create_appointment_patient_slot_conflict_returns_409(monkeypatch):
     # 슬롯 관련 기존 409 **셋 모두**와 달라야 한다(코드리뷰: 이전엔 셋 중 둘만 비교했다).
     assert detail != "이 시간엔 이미 예약이 있어요. 다른 시간을 골라 주세요."
     assert detail != "이 시간엔 모든 의사의 예약이 차 있어요. 다른 시간을 골라 주세요."
-    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 의사를 선택해 주세요."
+    assert detail != "이 시간엔 선택한 의사의 예약이 이미 있어요. 다른 시간이나 다른 의사를 골라 주세요."
 
 
 def test_create_appointment_auto_patient_slot_conflict_returns_409(monkeypatch):
