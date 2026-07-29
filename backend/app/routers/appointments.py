@@ -5,8 +5,8 @@ from fastapi import APIRouter
 
 from app.schemas.appointments import (
     AppointmentCreate,
-    AppointmentDoctorUpdate,
     AppointmentOut,
+    AppointmentRescheduleUpdate,
     AppointmentStatusUpdate,
 )
 from app.services import appointments as appointments_service
@@ -53,18 +53,20 @@ def update_appointment_status(
     """예약 상태 전이(확정/취소, FR-7·FR-8) — 예약 서비스만 status 를 소유한다(AD-5).
 
     전이 규칙·거부는 서비스가 소유한다. 완료 전이는 Epic 3(진료기록 tx 부작용),
-    담당 의사 변경(재배정)은 PATCH /appointments/{id}/doctor 가 담당한다.
+    일정 변경(의사·시각)은 PATCH /appointments/{id}/reschedule 가 담당한다.
     """
     return appointments_service.set_appointment_status(appointment_id, payload)
 
 
-@router.patch("/appointments/{appointment_id}/doctor", response_model=AppointmentOut)
-def update_appointment_doctor(
-    appointment_id: int, payload: AppointmentDoctorUpdate
+@router.patch("/appointments/{appointment_id}/reschedule", response_model=AppointmentOut)
+def reschedule_appointment(
+    appointment_id: int, payload: AppointmentRescheduleUpdate
 ) -> AppointmentOut:
-    """담당 의사 변경(재배정, FR-7 P0) — doctor_id 만 갱신하고 status 는 건드리지 않는다(AD-5).
+    """예약 일정 변경(FR-19) — doctor_id·reserved_at 을 갱신하고 status 는 건드리지 않는다(AD-5).
 
-    같은 진료과의 다른 의사만 허용(검증은 서비스 소유). 갱신된 예약을 정규 모델로 반환한다.
-    새 의사의 (의사, 슬롯) 점유는 자기 행 제외로 재검사해 충돌이면 409(Story 5.1, FR-7 P1).
+    Story 2.3 의 `PATCH …/doctor` 를 **대체**한다(폐기). 두 필드 모두 선택이라 의사만·시각만·
+    둘 다 전부 가능하고, 미지정 필드는 서비스가 현재 값으로 채운다. 대기·확정 예약만 허용.
+    새 (의사, 슬롯) 점유는 자기 행 제외로 재검사해 충돌이면 409, 환자 축 중복은 006 인덱스가
+    409, 지난 시각은 400 이다(검증·매핑은 서비스 소유).
     """
-    return appointments_service.set_appointment_doctor(appointment_id, payload)
+    return appointments_service.set_appointment_schedule(appointment_id, payload)

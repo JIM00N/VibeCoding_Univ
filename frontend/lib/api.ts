@@ -231,12 +231,18 @@ export const api = {
     startIso: string,
     endIso: string,
     patientId?: number,
+    excludeAppointmentId?: number,
   ): Promise<Availability> => {
     const query =
       `doctor_id=${encodeURIComponent(String(doctorId))}` +
       `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}` +
       // 환자 축(FR-15b) — 주면 그 환자가 이미 잡은 슬롯이 patient_taken 으로 온다. 없으면 빈 배열.
-      (patientId !== undefined ? `&patient_id=${encodeURIComponent(String(patientId))}` : "");
+      (patientId !== undefined ? `&patient_id=${encodeURIComponent(String(patientId))}` : "") +
+      // 자기 행 제외(FR-19, Story 7.1) — 일정 변경 화면이 그 예약 자신의 슬롯을 taken 으로
+      // 그리면 "시각 유지 + 의사만 변경"이 막힌다. 서버가 두 축 모두에서 제외한다.
+      (excludeAppointmentId !== undefined
+        ? `&exclude_appointment_id=${encodeURIComponent(String(excludeAppointmentId))}`
+        : "");
     const data = await request<Availability>(`/availability?${query}`);
     // 다른 조회와 동일한 방어 — 배열이 아니면 빈 배열로 정규화(화면 크래시 방지).
     return {
@@ -293,13 +299,19 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
 
-  /** 담당 의사 변경(재배정, FR-7 P0). 성공 시 갱신된 예약(정규 모델 — 새 doctor_id·doctor_name)을
-   *  돌려준다. 같은 과 아님·완료/취소 예약·경합(409) 등은 request 가 4xx {detail} 한국어로 던진다.
-   *  새 의사의 (의사, 슬롯) 점유 충돌도 409(Story 5.1) — 화면은 기존 toast 경로가 문구를 표시한다. */
-  updateAppointmentDoctor: (id: number, doctorId: number): Promise<Appointment> =>
-    request<Appointment>(`/appointments/${id}/doctor`, {
+  /** 예약 일정 변경(FR-19, Story 7.1) — 담당 의사·진료 시각을 한 번에 바꾼다. Story 2.3 의
+   *  updateAppointmentDoctor(`PATCH …/doctor`)를 **대체**한다(폐기).
+   *  두 필드 모두 선택 — 의사만·시각만·둘 다 전부 가능하고, 미지정 필드는 서버가 현재 값으로
+   *  채운다(doctor_id 생략은 "자동 배정"이 아니라 "현재 의사 유지"다).
+   *  성공 시 갱신된 예약(정규 모델)을 돌려준다. 무변경·같은 과 아님·완료/취소·지난 시각은 400,
+   *  (의사, 슬롯) 충돌·환자 축 중복·상태 경합은 409 — 전부 request 가 {detail} 한국어로 던진다. */
+  rescheduleAppointment: (
+    id: number,
+    payload: { doctor_id?: number; reserved_at?: string },
+  ): Promise<Appointment> =>
+    request<Appointment>(`/appointments/${id}/reschedule`, {
       method: "PATCH",
-      body: JSON.stringify({ doctor_id: doctorId }),
+      body: JSON.stringify(payload),
     }),
 
   /** 예약 단건 조회(Story 3.1). 진료 기록 페이지가 대상 예약(상태·표시 필드)을 로드한다.

@@ -28,7 +28,7 @@ class AppointmentStatusUpdate(BaseModel):
     status 를 Literal 이 아니라 str 로 받는다 — 잘못된 값이 Pydantic 422(리스트 detail)면
     lib/api.ts 가 일반 메시지로 바꾼다. 서비스가 400 문자열 한국어로 막아 친절 문구를 띄운다(AD-10).
     '완료'는 여기로 못 온다(Epic 3 진료기록의 tx 부작용, AD-5).
-    의사 변경(재배정)은 별도 요청 모델 AppointmentDoctorUpdate(별도 경로)가 담당한다.
+    일정 변경(의사·시각)은 별도 요청 모델 AppointmentRescheduleUpdate(별도 경로)가 담당한다.
     extra="forbid" — doctor_id 등 다른 필드를 동봉하면 조용히 무시하지 않고 422(분리 고정).
     """
 
@@ -37,19 +37,28 @@ class AppointmentStatusUpdate(BaseModel):
     status: str
 
 
-class AppointmentDoctorUpdate(BaseModel):
-    """담당 의사 변경(재배정) 요청(FR-7, P0). 새 doctor_id 하나만 받는다.
+class AppointmentRescheduleUpdate(BaseModel):
+    """예약 일정 변경 요청(FR-19, Story 7.1). 담당 의사와 진료 시각을 한 번에 받는다.
 
-    status 전이 요청(AppointmentStatusUpdate)과 경로·모델을 분리해 status 소유권(AD-5)과
-    의사 변경을 섞지 않는다. doctor_id 는 int 필수 — 누락은 422(2.2 의 status 누락과 동일 계약),
-    값 검증(의사 존재·같은 진료과·다른 의사)은 서비스가 400 한국어 문자열로 막는다(AD-10).
-    extra="forbid" — status 등 다른 필드를 동봉하면 조용히 무시하지 않고 422(분리 고정).
-    (의사, 슬롯) 가용성 재검사는 서비스·db 게이트가 수행한다(Story 5.1, FR-15 — 충돌 409).
+    Story 2.3 의 AppointmentDoctorUpdate(`PATCH …/doctor`)를 대체한다 — 같은 행·같은 컬럼을
+    놓고 두 경로가 경쟁하면 가용성 게이트가 두 벌이 되기 때문(제안서 §3.4).
+
+    - 두 필드 모두 **선택**이다: 의사만·시각만·둘 다 전부 정당한 요청이다. 미지정 필드는
+      서비스가 현재 값으로 채운다(SQL 분기 없음). doctor_id 미지정은 5.2 의 "자동 배정"이
+      **아니다** — 자동 배정은 생성 전용이고, 여기서는 "현재 의사 유지"를 뜻한다.
+    - **둘 다 없으면 서비스가 400 한국어**로 막는다(Pydantic 필수로 두지 않는 이유: 필수 누락은
+      422 리스트 detail 이라 lib/api.ts 가 일반 메시지로 바꿔 직원이 이유를 못 본다, AD-10).
+      값 검증(의사 존재·같은 진료과·무변경·과거 시각)도 전부 서비스가 400 문자열로 막는다.
+    - reserved_at 은 ISO-8601. 서비스가 to_slot() 으로 30분 격자에 floor 해 저장한다(AD-3/AD-9).
+    - extra="forbid" — status 를 동봉하면 조용히 무시하지 않고 422. status 소유권(AD-5)과
+      일정 변경을 코드 경로 수준에서 분리해 둔다.
+    - (의사, 슬롯) 가용성 재검사(자기 행 제외)와 환자 축 006 인덱스는 db 게이트가 수행한다 → 409.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    doctor_id: int
+    doctor_id: int | None = None
+    reserved_at: datetime | None = None
 
 
 class AppointmentOut(BaseModel):
