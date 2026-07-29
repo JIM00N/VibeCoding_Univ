@@ -62,6 +62,8 @@
 
 ## Deferred from: code review of 2-3-직원-담당-의사-변경-재배정 (2026-07-23)
 
+> ⚠️ **2026-07-29 correct-course — 이 절의 대상이 바뀐다.** Story 7.1(FR-19)이 `[의사 변경]` 다이얼로그를 `[변경]`(의사 + 시각)으로 교체하고 `PATCH …/doctor` → `PATCH …/reschedule` 로 대체한다. 아래 6건(`_UPDATE_APPOINTMENT_DOCTOR` 사본 · `runDoctorChange` 골격 · `renderActions` 버튼 중복 · `DoctorChangeDialog` 추출 · 의사 목록 per-open 재요청 · 인플라이트 중 닫기 비대칭)은 **7.1 이 손대는 코드와 같은 자리**다 — 7.1 착수 시 재평가한다: 교체되는 코드의 부채는 자연 소멸하고, 살아남는 것만 다시 defer 한다. 라인 번호도 7.1 이후 무효다. 나머지 항목(문구 dict · 404/409 블록 · 불변 단언)은 영향 없음.
+
 - **표시 조인 SQL 5번째 사본** — `_UPDATE_APPOINTMENT_DOCTOR`가 projection 사본을 4→5개로 늘림. 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:103-120]
 - **프런트 뮤테이션 골격 중복** — `runDoctorChange`/`runStatusChange`가 재진입 가드→pendingId→행 교체→toast→실패 reloadNonce 골격 공유(~-14줄 여지). 로컬 `runMutation` 헬퍼 후보. [frontend/app/staff/appointments/page.tsx:179-221]
 - **거부 문구 인라인 if/elif** — `_reject_message` 헬퍼 스타일 대신 인라인(도달 불가 else 포함). dict.get 한 줄로 8→3줄. [backend/app/services/appointments.py:148-155]

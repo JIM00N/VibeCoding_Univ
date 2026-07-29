@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-28 # chore/patient-slot-guard(PR #28) 머지·배포·라이브 확인 → done. Epic 5 회고 액션 #1·#4·#5 종결(계획 범위 종료 기록·분기 기준 확정·Epic 4 회고 미실시 확정). 열린 액션 2건 — 둘 다 트리거 대기(즉시 작업 없음)
+last_updated: 2026-07-29 # correct-course — FR-19(예약 일정 변경) 신설, **Epic 7 개설**(계획 범위 종료 후 첫 신규 요구, 분기 기준의 첫 정상 적용). create-story — Story 7.1 ready-for-dev, epic-7 in-progress. Epic 5 회고 액션 #2(규칙 파일 sweep) 종결 — 남은 열린 액션 1건(#3 부채 순증 방식)
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -95,6 +95,13 @@ development_status:
   6-2-직원-좌측-사이드바-셸: done # PR #19 머지(4dae1b1)·Vercel 배포·라이브 실측(/staff→예약관리·하단 탭 바·환자/의사/공유폼 셸 0) 완료. 코드리뷰 반영(드로어→하단 탭 바)
   6-3-직원-대리-예약: done # PR #20 머지(72f68d9)·Vercel 배포·라이브 실측(대리 예약 생성→목록 대기 반영, 콘솔 0) 완료. 코드리뷰 Patch 16·Defer 3·Dismiss 2(High 2건: 지난 슬롯 예약 가능·진료과 재선택 데드락, 둘 다 재현 후 수정). 검증 예약 42·43·44·45 원복
   epic-6-retrospective: done # 2026-07-26 회고 완료 (epic-6-retro-2026-07-26.md) — 액션 6건. 유의미한 발견: 5.1 범위 확장(대리 예약=3번째 쓰기 경로·taken 표시 2화면)
+
+  # Epic 7: 예약 일정 변경 (계획 범위 종료 후 신규 요구 — correct-course 2026-07-29)
+  # 분기 기준("FR 에 없음 = 에픽 신설")의 **첫 정상 적용**. FR-15b 예외와 대비되는 기록.
+  # 사유·트레이드오프·명시적 미이행 목록은 planning-artifacts/sprint-change-proposal-2026-07-29.md 가 정본.
+  epic-7: in-progress # 2026-07-29 첫 스토리(7.1) 생성으로 전이
+  7-1-예약-일정-변경: in-progress # FR-19. 담당 의사 + 진료 시각 통합 [변경]. `PATCH …/doctor` 폐기 → `PATCH …/reschedule` 대체(순 표면 증가 0). 마이그레이션 0건 — 5.1 게이트·006 인덱스·slot-picker·booking-slots 재사용. 착수 게이트 없음. 스토리 파일 AC 9건·Task 11건, 건드리는 파일 11개(신규 0). 다음 단계: /bmad-dev-story
+  epic-7-retrospective: optional # 에픽 종료 시 실시/미실시를 **명시 종결**한다 — Epic 4 회고가 3에픽째 열려 있던 전례(Epic 5 회고 액션 #4)를 반복하지 않기 위해
 
   # 에픽 밖 작업 (계획 범위 종료 후 — Epic 5 회고 액션 #1 트리아지 산물)
   # 스토리 파일 없음(chore) — AC 대신 FR-1b·FR-15b 와 코드리뷰 findings 가 기준 역할을 했다.
@@ -190,7 +197,7 @@ action_items:
   - epic: 5
     action: "correct-course 문서 sweep 에 .claude/rules/** · CLAUDE.md · frontend/AGENTS.md 포함 — 5.3 Patch 13 중 5건이 이 누락. paths: 붙은 규칙 파일은 자동 로드되는 살아있는 지시라 잔재 비용이 일반 문서보다 크다. sweep 표에 '규칙 파일' 행을 별도로 둔다. 다음 correct-course 발생 시점 적용(선제 작업 불필요)"
     owner: "지석(correct-course)"
-    status: open
+    status: done # 2026-07-29 correct-course(FR-19)에서 이행 — 제안서 §4.2 를 '살아있는 규칙 파일' 별도 절로 두고 6개 전건 확인: backend.md 갱신(walk-in 예고 문구 철회 + Epic 7 교체 서술), frontend.md·workflow.md·CLAUDE.md·frontend/AGENTS.md 무영향 확인, deferred-work.md 는 2-3 defer 6건이 7.1 교체 대상과 같은 자리라 재평가 주석. **문서 sweep 만으로 끝내지 않고 '무영향'도 근거와 함께 기록**하는 형태가 이 액션의 정착형
   - epic: 5
     action: "부채 순증 대응 방식 전환 검토 — 5.4 가 10건 닫았는데 14건 신규(순 +4). '가끔 정리 스토리 1회' 모델의 한계. 대안: 스토리마다 사본 1건 수렴을 Task 로 내장(정리 상시화). 다음 정리 시점을 정하기 전에 이 방식부터 결정"
     owner: "지석"
@@ -202,4 +209,4 @@ action_items:
   - epic: 5
     action: "계획 범위 종료 기록 + 이후 작업 분기 기준 확정 — epics.md 에 'P0+P0.5+P1 계획 범위 완료(2026-07-28)' 기록. 기준: FR 에 있는데 안 됨 = 버그(chore/) · FR 에 없음 = Epic 7 신설"
     owner: "지석 + PM"
-    status: done # 2026-07-28 완료. ① epics.md 에 "계획 범위 종료" 절 신설 — P0+P0.5+P1 완료·Epic 7 없음·분기 기준 표. ② 기준은 **유지**(지석님 결정): FR 있는데 안 됨=chore · FR 없음=Epic 7. ③ FR-15b 를 chore 로 처리한 건은 **선례가 아니라 예외 1건**으로 명시 기록(대가까지 함께 — 스토리·AC·Change Log 부재). 예외가 두 번이면 기준을 고칠지부터 재검토한다
+    status: done # 2026-07-28 완료. ① epics.md 에 "계획 범위 종료" 절 신설 — P0+P0.5+P1 완료·Epic 7 없음·분기 기준 표. ② 기준은 **유지**(지석님 결정): FR 있는데 안 됨=chore · FR 없음=Epic 7. ③ FR-15b 를 chore 로 처리한 건은 **선례가 아니라 예외 1건**으로 명시 기록(대가까지 함께 — 스토리·AC·Change Log 부재). 예외가 두 번이면 기준을 고칠지부터 재검토한다. **2026-07-29 후속:** ①의 "Epic 7 없음"은 갱신됐다 — FR-19(예약 일정 변경)로 **Epic 7 개설**. 기준을 그대로 적용한 첫 사례라 예외는 여전히 1건이고 재검토는 발동하지 않았다
