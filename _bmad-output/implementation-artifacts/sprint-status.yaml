@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-29 # correct-course — FR-19(예약 일정 변경) 신설, **Epic 7 개설**(계획 범위 종료 후 첫 신규 요구, 분기 기준의 첫 정상 적용). dev-story — Story 7.1 구현 완료 → review(pytest 131→140·curl 실증 8종·브라우저 실측·원복 완료). Epic 5 회고 액션 #2(규칙 파일 sweep) 종결 — 남은 열린 액션 1건(#3 부채 순증 방식)
+last_updated: 2026-07-29 # correct-course — FR-19(예약 일정 변경) 신설, **Epic 7 개설**(계획 범위 종료 후 첫 신규 요구, 분기 기준의 첫 정상 적용). Story 7.1 **done**(PR #29 머지·배포·라이브 확인) — epic-7 done. 4층 코드리뷰 Patch 17·Defer 5 반영. Epic 5 회고 액션 #2(규칙 파일 sweep) 종결 — 남은 열린 액션 1건(#3 부채 순증 방식)
 project: hospital-care
 project_key: NOKEY
 tracking_system: file-system
@@ -99,8 +99,8 @@ development_status:
   # Epic 7: 예약 일정 변경 (계획 범위 종료 후 신규 요구 — correct-course 2026-07-29)
   # 분기 기준("FR 에 없음 = 에픽 신설")의 **첫 정상 적용**. FR-15b 예외와 대비되는 기록.
   # 사유·트레이드오프·명시적 미이행 목록은 planning-artifacts/sprint-change-proposal-2026-07-29.md 가 정본.
-  epic-7: in-progress # 2026-07-29 첫 스토리(7.1) 생성으로 전이
-  7-1-예약-일정-변경: review # FR-19. 담당 의사 + 진료 시각 통합 [변경]. `PATCH …/doctor` 폐기 → `PATCH …/reschedule` 대체(순 표면 증가 0). 마이그레이션 0건 — 5.1 게이트·006 인덱스·slot-picker·booking-slots 재사용. 착수 게이트 없음. 스토리 파일 AC 9건·Task 11건, 건드리는 파일 11개(신규 0). 다음 단계: /bmad-dev-story
+  epic-7: done # 2026-07-29 7.1 done(커밋+배포+라이브 확인). 단일 스토리 에픽 — 회고는 optional
+  7-1-예약-일정-변경: done # FR-19. 담당 의사 + 진료 시각 통합 [변경]. `PATCH …/doctor` 폐기 → `PATCH …/reschedule` 대체(순 표면 증가 0). 마이그레이션 0건 — 5.1 게이트·006 인덱스·slot-picker·booking-slots 재사용. 착수 게이트 없음. 스토리 파일 AC 9건·Task 11건, 건드리는 파일 11개(신규 0). PR #29 머지(512c7b1)·Railway/Vercel 배포·라이브 실측 완료. 4층 코드리뷰 42→22건: Decision 1·Patch 16+1·Defer 5·Dismiss 1. pytest 131→143·ruff 0·lint 0. 라이브: /doctor→404 폐기 완결, 두 축 자기 행 제외, 006 인덱스 UPDATE 발동. 검증 데이터 전량 원복
   epic-7-retrospective: optional # 에픽 종료 시 실시/미실시를 **명시 종결**한다 — Epic 4 회고가 3에픽째 열려 있던 전례(Epic 5 회고 액션 #4)를 반복하지 않기 위해
 
   # 에픽 밖 작업 (계획 범위 종료 후 — Epic 5 회고 액션 #1 트리아지 산물)
