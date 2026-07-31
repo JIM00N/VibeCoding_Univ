@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of 8-1-의사-대시보드-환자-진료내역 (2026-07-31)
+
+- **`/doctor/patients/[id]` 에 의사 신원 가드가 없다** — `/doctor` 대시보드는 두 가드를 갖는다: ① `ready && !doctor` 면 `/doctor/select` 로 replace ② 저장 신원을 `getAllDoctors()` 로 대조해 불일치면 `clearDoctor()`+리다이렉트(재시드로 id 가 남에게 재할당되는 경우). 8.1 이 만든 `/doctor/patients/[id]` 에는 **둘 다 없다** — 신원 없이 직접 진입하면 역할 바가 `의사` 배지 + 이름 없음 + "다른 의사" 액션 없음으로 뜨고, stale 신원이면 옛 이름이 그대로 보인다. **6.1 의 `/staff/appointments/[id]/record?from=doctor` 가 정확히 같은 성질**(가드 없음 + `doctor?.name`)이라 8.1 이 만든 회귀가 아니라 그 선례의 계승이다. AD-8 데모 모델상 새 노출도 아니다(`/staff/patients/{id}` 도 URL 만 알면 열린다). 자기수정 경로 존재 — [의사 화면으로] → `/doctor` → 대시보드 가드가 `/doctor/select` 로 보낸다. 근본 해결은 신원 가드를 공용 훅으로 뽑아 의사 라우트 전체에 적용하는 것(4.1 deferred 의 "환자 서브 페이지 신원 신선도"와 **같은 뿌리** — 환자 축은 이미 같은 항목이 열려 있다). [frontend/app/doctor/patients/[id]/page.tsx, frontend/app/staff/appointments/[id]/record/page.tsx]
+
 > 2026-07-27 Story 5.4(중복 사본 정리)가 사본 수렴류 10건을 처리·삭제했다 — booking-slots 2-소스 ·
 > orDash 4사본 · 짝 없는 slot-label · formatReservedAt 2-소스 · ErrorState 로컬 6사본(승격 임계 항목) ·
 > fetch-or-404 4사본 · CAS 409 문구 3사본 · naive→UTC 인라인 3곳 · \_blank_str_to_none 2사본 ·

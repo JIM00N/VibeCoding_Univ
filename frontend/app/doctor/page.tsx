@@ -5,6 +5,8 @@
 // 그 의사에게 배정된 예약만 받아(AD-8 앱 레벨 필터·보안 아님), 활성(대기·확정)을 먼저, 완료를 "완료된
 // 진료"로 분류해 보여준다(FR-17 — status 분류, 신규 스키마 없음). 확정 예약에서 진료 기록 작성은 Story 3.1
 // 폼을 그대로 재사용한다(/staff/appointments/[id]/record?from=doctor — 역할-인지 재사용).
+// 환자 이름은 그 환자의 진료 내역으로 가는 링크다(FR-20, Story 8.1 — /doctor/patients/[id], 이것도
+// 4.2 화면의 재사용이다). 진료 기록을 쓰기 전에 과거 진단·처방을 확인하는 경로가 이것 하나뿐이다.
 // 가드는 /patient 홈, 목록 렌더는 /staff/appointments 를 미러한다(담당 의사 열 제거·액션은 기록 작성만).
 // 브라우저는 lib/api.ts 만 통해 백엔드를 호출한다(AD-1). status 전이(확정/취소/재배정)는 직원이 소유(AD-5).
 
@@ -49,12 +51,20 @@ function renderDepartment(appt: Appointment) {
 // 헬퍼로 묶는다(이 파일의 renderDepartment/renderActions 관용 — 사본 2개를 만들지 않는다).
 // 대상 id 는 appt.patient_id 다 — 이름으로 역조회하지 않는다. 라우트는 /doctor/patients/[id] 로,
 // /staff/patients/[id] 와 **같은 모듈**이지만 /staff/* 밖이라 직원 사이드바 셸이 안 걸린다.
+//
+// ⚠️ 스타일은 hover 에 의존하지 않는다 — **터치 기기엔 hover 가 없어** 모바일 카드에서 이름이
+// 그냥 굵은 텍스트로 보이고 탭 가능함을 알 수 없다(EXPERIENCE.md "금지: hover-only 액션(모바일)").
+// 그래서 밑줄은 **상시**, 색은 primary emerald(DESIGN.md — 링크는 primary). 레포의 인라인 텍스트
+// 링크 선례(proxy-booking-dialog.tsx:600)와 같은 조합이다. 굵기는 표/카드 부모가 이미 정한다.
 // 포커스 링은 staff-sidebar 내비 링크와 같은 규약(UX-DR9 — 포커스 링 항상 보임).
+// aria-label 로 목적지를 밝힌다 — 이름만 읽으면 어디로 가는 링크인지 모르고, 모바일 카드엔
+// 표의 `환자` 열 헤더 같은 컨텍스트도 없다(UX-DR9 한국어 SR 라벨).
 function renderPatientLink(appt: Appointment) {
   return (
     <Link
       href={`/doctor/patients/${appt.patient_id}`}
-      className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+      aria-label={`${appt.patient_name} 진료 내역 보기`}
+      className="rounded-sm text-primary underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
     >
       {appt.patient_name}
     </Link>
