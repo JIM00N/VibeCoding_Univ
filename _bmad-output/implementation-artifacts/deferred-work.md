@@ -74,7 +74,9 @@
 
 > ✅ **2026-07-29 재평가 완료 (Story 7.1 done — 스코프 커밋의 약속 이행).** 7.1 이 `[의사 변경]` 다이얼로그를 `[변경]` 으로, `PATCH …/doctor` 를 `PATCH …/reschedule` 로 대체하면서 이 절의 6건이 갈렸다. **라인 번호는 7.1 이전 기준이라 아래 살아남은 항목 외에는 무효다.**
 >
-> **소멸 4건**(코드가 사라져 부채도 함께 사라짐 — 재확인 완료):
+> ✅ **2026-07-31 불릿 삭제 실행 완료 (Epic 7 회고 액션 #2 ③).** 아래 "소멸"로 판정한 항목의 **원본 불릿이 이 절에 그대로 살아 있어** 장부가 자기 자신과 어긋나 있었다(표기 69·실질 65). 지우기 전에 코드로 3건 전부 재확인: `runDoctorChange` 부재(주석 언급만 잔존) · `reschedule-dialog.tsx` 573줄 존재 · `handleOpenChange:381-386` 의 `if (!next && submittingRef.current) return` 가드 존재. **재평가는 원본을 지워야 완료된다**(회고 교훈 3).
+>
+> **소멸 4건**(코드가 사라져 부채도 함께 사라짐 — 재확인 완료 / **1건은 이월로 정정, 실 삭제는 3건**):
 > - `_UPDATE_APPOINTMENT_DOCTOR` 표시 조인 5번째 사본 → `_UPDATE_APPOINTMENT_SCHEDULE` 로 교체(사본 수는 그대로 5 — **소멸이 아니라 이월**. 아래 "살아남음" 참조)
 > - `runDoctorChange` 골격 중복 → 함수 삭제, 다이얼로그가 자체 제출 경로를 가짐
 > - `DoctorChangeDialog` 컴포넌트 추출 → **`components/reschedule-dialog.tsx` 신설로 이행 완료**
@@ -87,14 +89,11 @@
 >
 > 나머지 항목(문구 dict · 404/409 블록 · 불변 단언 · 가드 pre-fetch)은 영향 없음. 7.1 코드리뷰가 새로 낸 defer 5건은 위 "code review of 7-1-예약-일정-변경" 절에 있다.
 
-- **표시 조인 SQL 5번째 사본** — `_UPDATE_APPOINTMENT_DOCTOR`가 projection 사본을 4→5개로 늘림. 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:103-120]
-- **프런트 뮤테이션 골격 중복** — `runDoctorChange`/`runStatusChange`가 재진입 가드→pendingId→행 교체→toast→실패 reloadNonce 골격 공유(~-14줄 여지). 로컬 `runMutation` 헬퍼 후보. [frontend/app/staff/appointments/page.tsx:179-221]
+- **표시 조인 SQL 5번째 사본** — 이제 `_UPDATE_APPOINTMENT_SCHEDULE`가 그 사본을 갖는다(7.1 이 `_UPDATE_APPOINTMENT_DOCTOR` 를 교체 — 개수는 그대로 5, 이월). 공유 fragment 상수 합성 시 파일 전체 약 -28줄, `AppointmentOut` 모양 변경이 1곳으로 수렴. 단 기존 4개는 2.1·2.2 의도적 컨벤션이라 일괄 정리 스토리에서. [backend/app/db/appointments.py:202]
 - **거부 문구 인라인 if/elif** — `_reject_message` 헬퍼 스타일 대신 인라인(도달 불가 else 포함). dict.get 한 줄로 8→3줄. [backend/app/services/appointments.py:148-155]
 - **renderActions 분기 버튼 중복** — 대기/확정 분기가 취소+의사 변경 버튼을 중복(~27→16줄 여지). [frontend/app/staff/appointments/page.tsx:233-259]
-- **DoctorChangeDialog 컴포넌트 추출** — Dialog 전용 상태 5종이 페이지 스코프에 산재(~430줄 페이지). 추출 시 페이지는 doctorTarget+성공 콜백만 유지. [frontend/app/staff/appointments/page.tsx:89-211]
 - **의사 목록 per-open 재요청** — Dialog를 열 때마다 같은 과 GET /doctors 반복(준정적 참조 데이터, 매번 로딩 표시). `useRef<Map<hd_id, Doctor[]>>` 캐시 후보. [frontend/app/staff/appointments/page.tsx:128-149]
 - **404/409 블록 중복** — `set_appointment_status`와 문구·구조 중복. `_fetch_appointment_or_404` + 공유 상수 후보(2.2 미러 컨벤션에 가까워 저우선). [backend/app/services/appointments.py:144-146·177-182]
-- **인플라이트 중 닫기 비대칭** — 의사 변경 Dialog는 실행-후-닫기라 PATCH 진행 중 Esc/닫기가 살아있음(AlertDialog는 닫고-실행). 데이터 무결성 문제는 없고 UX 일관성만. [frontend/app/staff/appointments/page.tsx:423]
 - **불변 단언의 동어반복** — "status·진료과 불변" 단위 테스트 단언이 monkeypatch fake의 에코 값 검증이라 SQL 회귀를 못 잡음(실 보증은 curl/브라우저 실측). 계약 테스트 아키텍처의 본질적 한계로 기록. [backend/tests/test_appointments.py:509-533]
 
 ## Deferred from: code review of 1-5-환자-신원-선택-역할-컨텍스트-바 (2026-07-17)
