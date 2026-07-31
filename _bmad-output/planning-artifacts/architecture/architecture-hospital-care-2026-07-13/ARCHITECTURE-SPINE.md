@@ -222,6 +222,7 @@ erDiagram
 | 진료 기록·처방 (FR-9~10) | `services/records`(완료 전이 동일 tx) | AD-5, AD-6 |
 | walk-in 환자 접수 (FR-16) | `services/appointments` 자동 배정 경로 (= 예약 생성과 같은 관문) | AD-3, AD-4 |
 | 조회(환자/직원) (FR-11~12) | `routers/*` 읽기 + `patient_id` 필터 | AD-8, AD-10 |
+| 조회(의사) (FR-20) | frontend `doctor/page.tsx` 링크 → 4.2 조회 화면 재사용(역할 컨텍스트만 의사판) | AD-8, AD-10 — **백엔드 diff 0** |
 | 참조데이터·시드 (FR-13~14) | `db/seed` | AD-9 |
 | 배포·RLS (NFR-1, NFR-4) | 프런트 Vercel · 백 Railway + `db/migrations/001_rls` | AD-7, AD-9 |
 | 데이터 정합성 (NFR-2) | `db/migrations` (CHECK·부분유니크) | AD-9 |
