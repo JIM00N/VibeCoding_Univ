@@ -107,7 +107,7 @@ development_status:
   # 분기 기준("FR 에 없음 = 에픽 신설")의 **정상 적용 2번째**. 예외(FR-15b)는 1건으로 고정 — 재검토 미발동.
   # 사유·트레이드오프·착수 전 결정 사항(라우트·셸 전략 A/B/C)은 planning-artifacts/sprint-change-proposal-2026-07-31.md 가 정본.
   epic-8: in-progress # 2026-07-31 8.1 스토리 생성으로 전이
-  8-1-의사-대시보드-환자-진료내역: ready-for-dev # FR-20. 스토리 파일 AC 7건·Task 9건. 백엔드 diff 0·마이그레이션 0·신규 컴포넌트 0 — 링크 배선(doctor/page.tsx:243·263) + /staff/patients/[id] 역할 인지 확장. 착수 게이트 없음. ⚠️ Task 0 이 라우트·셸 전략(A/B/C)을 스파이크로 확정한 뒤 본 구현 — C(=/doctor/patients/[id] 재수출) 권고, D(298줄 복제) 탈락. Epic 7 액션 3건의 최초 적용처: #1(대응표 "이 가드가 존재하는 이유" 열)·#2②(사본 수렴 Task 상시 내장 — genderText 3사본)·#4(체크리스트에서 page.clock 제외)
+  8-1-의사-대시보드-환자-진료내역: review # FR-20. **C안 확정**(/doctor/patients/[id] 모듈 재수출 — 셸 자동 제외 + Suspense 제약 회피, DESIGN.md 불변식 무변경). 신규 1·수정 5, 순 +61/−31. 백엔드 diff 0 · pytest 143 · ruff 0 · lint 0 · build 통과 · curl 3종 200. genderText 3사본 수렴(장부 66→65). ⚠️ Task 7 브라우저 3항목 미수행([~]) · Task 8 릴리스 게이트 열림. 스토리 파일 AC 7건·Task 9건. 백엔드 diff 0·마이그레이션 0·신규 컴포넌트 0 — 링크 배선(doctor/page.tsx:243·263) + /staff/patients/[id] 역할 인지 확장. 착수 게이트 없음. ⚠️ Task 0 이 라우트·셸 전략(A/B/C)을 스파이크로 확정한 뒤 본 구현 — C(=/doctor/patients/[id] 재수출) 권고, D(298줄 복제) 탈락. Epic 7 액션 3건의 최초 적용처: #1(대응표 "이 가드가 존재하는 이유" 열)·#2②(사본 수렴 Task 상시 내장 — genderText 3사본)·#4(체크리스트에서 page.clock 제외)
 
   # 에픽 밖 작업 (계획 범위 종료 후 — Epic 5 회고 액션 #1 트리아지 산물)
   # 스토리 파일 없음(chore) — AC 대신 FR-1b·FR-15b 와 코드리뷰 findings 가 기준 역할을 했다.

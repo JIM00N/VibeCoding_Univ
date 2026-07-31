@@ -45,6 +45,22 @@ function renderDepartment(appt: Appointment) {
   );
 }
 
+// 환자 이름 → 그 환자의 진료 내역(FR-20, Story 8.1). ≥md 표와 모바일 카드가 같은 마크업을 쓰도록
+// 헬퍼로 묶는다(이 파일의 renderDepartment/renderActions 관용 — 사본 2개를 만들지 않는다).
+// 대상 id 는 appt.patient_id 다 — 이름으로 역조회하지 않는다. 라우트는 /doctor/patients/[id] 로,
+// /staff/patients/[id] 와 **같은 모듈**이지만 /staff/* 밖이라 직원 사이드바 셸이 안 걸린다.
+// 포커스 링은 staff-sidebar 내비 링크와 같은 규약(UX-DR9 — 포커스 링 항상 보임).
+function renderPatientLink(appt: Appointment) {
+  return (
+    <Link
+      href={`/doctor/patients/${appt.patient_id}`}
+      className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      {appt.patient_name}
+    </Link>
+  );
+}
+
 // 확정 예약에만 [기록 작성] 진입점(Story 3.1 폼 재사용 — ?from=doctor 로 역할-인지). 대기·완료는 액션 없음.
 // 대기 확정은 직원이 소유(AD-5·2.2)라 의사 화면엔 전이 버튼을 두지 않는다.
 function renderActions(appt: Appointment) {
@@ -240,7 +256,7 @@ function AppointmentSection({
               <TableBody>
                 {items.map((a) => (
                   <TableRow key={a.id}>
-                    <TableCell className="font-medium">{a.patient_name}</TableCell>
+                    <TableCell className="font-medium">{renderPatientLink(a)}</TableCell>
                     <TableCell>{renderDepartment(a)}</TableCell>
                     <TableCell>{formatReservedAt(a.reserved_at)}</TableCell>
                     <TableCell>
@@ -260,7 +276,7 @@ function AppointmentSection({
             {items.map((a) => (
               <Card key={a.id} className="p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-base font-semibold">{a.patient_name}</div>
+                  <div className="text-base font-semibold">{renderPatientLink(a)}</div>
                   <AppointmentStatusBadge status={a.status} />
                 </div>
                 <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-sm">

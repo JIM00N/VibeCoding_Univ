@@ -26,13 +26,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, type Patient } from "@/lib/api";
-import { orDash } from "@/lib/format";
+import { genderText, orDash } from "@/lib/format";
 
-// 성별 역매핑 — DB 는 M/F/null, 화면은 남/여/—(1.3 성별 규약, Story 4.2 조회에서도 재사용).
-const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
-function genderText(gender: string | null): string {
-  return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
-}
 export default function PatientListPage() {
   const router = useRouter();
   const [patients, setPatients] = useState<Patient[]>([]);

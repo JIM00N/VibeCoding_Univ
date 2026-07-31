@@ -8,7 +8,7 @@
 // 브라우저는 lib/api.ts 만 통해 호출(AD-1). 렌더 우선순위: 로딩 > 오류 > 부재 > (섹션별)빈 상태 > 목록.
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge";
 import { CategoryBadge } from "@/components/category-badge";
@@ -27,14 +27,9 @@ import {
 } from "@/components/ui/table";
 import { api, type Appointment, type MedicalRecord, type Patient } from "@/lib/api";
 import { departmentColorClass, doctorColorClass } from "@/lib/category-color";
-import { formatReservedAt, orDash } from "@/lib/format";
+import { useDoctorIdentity } from "@/lib/doctor-identity";
+import { formatReservedAt, genderText, orDash } from "@/lib/format";
 
-// 성별 역매핑 — 목록 페이지의 표시 규약과 동일. 3사본 잔존은 deferred-work 5-4 절 기록 참조
-// (orDash 는 5.4 에서 lib/format 정본으로 이관됨).
-const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
-function genderText(gender: string | null): string {
-  return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
-}
 // 진료과·담당 의사 색 배지(2.4) — 예약 섹션에서 재사용(staff/appointments 렌더 미러).
 function renderDepartment(appt: Appointment) {
   return (
@@ -57,6 +52,17 @@ export default function StaffPatientHistoryPage() {
   const params = useParams<{ id: string }>();
   const patientId = Number(params.id);
   const validId = Number.isInteger(patientId) && patientId > 0;
+
+  // 진입 역할 판정 (FR-20, Story 8.1) — /doctor/patients/[id] 로 들어왔으면 의사, /staff/… 면 직원.
+  // ⚠️ usePathname 을 쓰는 이유: 6.1 record 폼의 `?from=doctor` 를 그대로 이식하면 useSearchParams 가
+  // 되고, 그러면 Suspense 경계가 강제된다(Next 16 — dev 는 통과하고 production build 에서 실패한다).
+  // 이 화면은 라우트 자체가 갈라져 있어 경로만으로 판정되므로 그 제약이 아예 안 생긴다
+  // (staff-sidebar.tsx 가 같은 이유로 한 선택). 데이터·로직은 두 경로가 완전히 동일하다.
+  const pathname = usePathname();
+  const fromDoctor = pathname.startsWith("/doctor");
+  const { doctor } = useDoctorIdentity();
+  const listHref = fromDoctor ? "/doctor" : "/staff/patients";
+  const backLabel = fromDoctor ? "의사 화면으로" : "환자 목록으로";
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -104,18 +110,25 @@ export default function StaffPatientHistoryPage() {
 
   return (
     <>
-      <RoleContextBar role="직원" />
+      {/* 의사 진입이면 의사판 바(FR-20). doctorAction 은 기본값 "switch" 를 그대로 쓴다 —
+          record 폼(6.1)이 "none" 을 쓴 이유는 "입력 중 신원 전환 = 미저장 입력 유실"인데,
+          이 화면은 조회 전용이라 잃을 입력이 없다. 직원 진입은 4.2 그대로(회귀 0). */}
+      {fromDoctor ? (
+        <RoleContextBar role="의사" doctorName={doctor?.name} />
+      ) : (
+        <RoleContextBar role="직원" />
+      )}
       <main className="mx-auto w-full max-w-4xl px-6 py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-[28px] font-bold leading-tight">환자 진료 내역</h1>
-          <Button variant="ghost" onClick={() => router.push("/staff/patients")}>
-            환자 목록으로
+          <Button variant="ghost" onClick={() => router.push(listHref)}>
+            {backLabel}
           </Button>
         </div>
 
         {/* 렌더 우선순위: 잘못된 id > 로딩 > 오류(백엔드 다운) > 부재(삭제/오타) > 내역 섹션. */}
         {!validId ? (
-          <NotFoundState onBack={() => router.push("/staff/patients")} />
+          <NotFoundState onBack={() => router.push(listHref)} backLabel={backLabel} />
         ) : loading ? (
           <PageSkeleton />
         ) : error ? (
@@ -123,12 +136,12 @@ export default function StaffPatientHistoryPage() {
             <ErrorState
               message={error}
               onRetry={() => setReloadNonce((n) => n + 1)}
-              onBack={() => router.push("/staff/patients")}
-              backLabel="환자 목록으로"
+              onBack={() => router.push(listHref)}
+              backLabel={backLabel}
             />
           </div>
         ) : notFound || !patient ? (
-          <NotFoundState onBack={() => router.push("/staff/patients")} />
+          <NotFoundState onBack={() => router.push(listHref)} backLabel={backLabel} />
         ) : (
           <>
             {/* 환자 식별 헤더 — 누구의 내역인지 확정(이름 + 생년월일·성별·연락처). */}
@@ -281,7 +294,9 @@ function SectionEmpty({ text }: { text: string }) {
 }
 
 // 환자 부재/잘못된 주소 — 목록이 정상 로드됐는데 그 환자가 없을 때(삭제·오타). 오류(백엔드 다운)와 구분.
-function NotFoundState({ onBack }: { onBack: () => void }) {
+// backLabel 을 prop 으로 받는다 — 문구가 여기 박혀 있으면 의사 진입에서도 "환자 목록으로"가 남는다
+// (ErrorState 정본이 이미 backLabel 을 받는 것과 같은 계약).
+function NotFoundState({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   return (
     <div className="mt-6 rounded-xl border border-dashed py-16 text-center">
       <p className="text-lg font-medium">환자를 찾을 수 없어요.</p>
@@ -290,7 +305,7 @@ function NotFoundState({ onBack }: { onBack: () => void }) {
       </p>
       <div className="mt-4">
         <Button variant="outline" onClick={onBack}>
-          환자 목록으로
+          {backLabel}
         </Button>
       </div>
     </div>

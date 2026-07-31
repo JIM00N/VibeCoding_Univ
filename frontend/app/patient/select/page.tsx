@@ -14,14 +14,9 @@ import { RoleContextBar } from "@/components/role-context-bar";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Patient } from "@/lib/api";
-import { orDash } from "@/lib/format";
+import { genderText, orDash } from "@/lib/format";
 import { usePatientIdentity } from "@/lib/patient-identity";
 
-// 성별 역매핑 — DB 는 M/F/null, 화면은 남/여/—(1.3 성별 규약, 1.4 목록과 동일).
-const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
-function genderText(gender: string | null): string {
-  return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
-}
 // 동명이인을 구분할 수 있게 식별 정보를 함께 싣는다(UX-DR9).
 // 이름만으로 등록된 환자(1.3 이 허용 — 생년월일·성별 모두 null)는 표시할 식별 정보가 없어
 // 동명이인이 시각·스크린리더 양쪽에서 완전히 같아진다 → 그땐 등록번호(id)로라도 가른다.

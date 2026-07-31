@@ -22,3 +22,12 @@ export function formatReservedAt(iso: string): string {
 export function orDash(value: string | null): string {
   return value && value.trim() ? value : "—";
 }
+
+const GENDER_LABEL: Record<string, string> = { M: "남", F: "여" };
+
+/** 성별 역매핑 — DB 는 M/F/null, 화면은 남/여/—(1.3 성별 규약). 환자 선택·환자 목록·환자 상세
+ *  3화면 사본을 여기로 수렴한 정본(Story 8.1, orDash 선례와 같은 방식).
+ *  알 수 없는 값은 대시로 뭉개지 않고 원문을 그대로 보여준다(정보 손실 방지 — 3사본 공통 동작). */
+export function genderText(gender: string | null): string {
+  return gender ? (GENDER_LABEL[gender] ?? gender) : "—";
+}

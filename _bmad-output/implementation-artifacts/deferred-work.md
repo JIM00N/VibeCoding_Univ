@@ -29,7 +29,6 @@
 
 ## Deferred from: 5-4-중복-사본-정리 구현 (2026-07-27)
 
-- **`genderText`·`GENDER_LABEL` 3사본** — 성별 역매핑(M/F/null → 남/여/—)이 patient/select · staff/patients · staff/patients/[id] 에 동일 구현으로 존재. 5.4 스토리 대상 목록(회고 액션 #5 + deferred 라우팅 건) 밖이라 스코프 규율상 보류 — orDash 와 같은 방식으로 `lib/format.ts` 이관이 자연스럽다. 다음 정리 기회(또는 해당 화면을 만지는 스토리)에서 처리. [frontend/app/patient/select/page.tsx ↔ frontend/app/staff/patients/page.tsx ↔ frontend/app/staff/patients/[id]/page.tsx]
 - **`ensure_utc` 의 datetime 경계 OverflowError** — 5.4 가 visited_at 인라인 정규화(naive 만 replace)를 공유 `ensure_utc`(항상 `astimezone(utc)`)로 바꾸며, 연도 1/9999 경계의 aware 비-UTC 입력(예: `0001-01-01T00:00:00+09:00`)이 기존 201(저장)에서 500(OverflowError→전역 핸들러)으로 바뀌는 병리 경로가 생겼다(5.4 드리프트 검증 발견 → 코드리뷰 3층 교차 재확인·Defer 확정, Low). 프런트는 이런 값을 만들 수 없고 크래프트 API 한정 — 필요해지면 ensure_utc 에 경계 가드 또는 400 매핑. [backend/app/slots.py, backend/app/services/medical_records.py]
 - **`ErrorState` 정본의 live-region 부재** — 정본(`components/error-state.tsx`)에 `role`/`aria-live` 가 없어 오류 상태 전환이 스크린리더에 통지되지 않는다(같은 파일군의 NoticeState 는 `role="status"` 보유 — 드리프트). 3.1 deferred 항목("사본 승격 임계")에 딸려 있던 관찰이 5.4 의 항목 삭제로 소실될 뻔해 재기록(5.4 코드리뷰 Patch). 이관 화면들의 기존 동작과 동일해 회귀는 아님 — 1.5 deferred 의 SR 침묵 하드닝(aria-live)과 함께 처리 후보. [frontend/components/error-state.tsx]
 
