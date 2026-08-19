@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 시크릿이 필요 없다. 모든 페이지가 force-dynamic 이라 빌드 시점에 DB를 치지 않고,
+# getDb() 는 모듈 로드가 아니라 첫 호출에서 환경변수를 확인한다.
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # lint 는 타입체크를 하지 않는다 — 그래서 build 가 따로 필요하다
+      - run: npm run lint
+
+      # 타입 오류는 여기서만 드러난다
+      - run: npm run build
