@@ -65,12 +65,20 @@ export async function leaveGroup(formData: FormData) {
   const user = await getCurrentUser();
   if (!user) redirect(`/login?next=${encodeURIComponent(`/groups/${groupId}`)}`);
 
-  await getDb()
+  const db = getDb();
+  await db
     .from("memberships")
     .delete()
     .eq("group_id", groupId)
     .eq("user_id", user.id)
     .neq("role", "owner");
+
+  // 멤버가 아닌 사람이 참석자 명단에 남아 있으면 안 된다 — 이 모임 정모의 참석 기록도 함께 지운다.
+  const { data: eventRows } = await db.from("events").select("id").eq("group_id", groupId);
+  const eventIds = (eventRows ?? []).map((e) => e.id as number);
+  if (eventIds.length > 0) {
+    await db.from("attendances").delete().eq("user_id", user.id).in("event_id", eventIds);
+  }
 
   revalidatePath(`/groups/${groupId}`);
   revalidatePath("/");

@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 계모임 (gyemoim)
 
-## Getting Started
+취미 모임을 둘러보고 가입하는 웹 서비스. 소모임(somoim.co.kr)의 정보구조를 참조한 **4시간 타임박스 학습용 프로토타입**입니다. 실제 서비스가 아니에요.
 
-First, run the development server:
+- **라이브** — https://vibe-coding-univ.vercel.app
+- **기획** — [PRD.md](./PRD.md) (데모 시나리오·기능 우선순위·컷 라인)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 데모 계정
+
+회원가입은 없습니다. `demo01` ~ `demo40`, **비밀번호는 전부 `1234`**.
+로그인 화면에 `demo01`~`demo08`이 버튼으로 깔려 있고, 나머지는 직접 입력합니다 (청중이 많을 때 각자 다른 계정을 쓰라고 40개를 뒀어요).
+
+> ⚠️ 비밀번호는 평문으로 저장됩니다. 공개된 데모 계정이라 보호할 자산이 없어서 내린 **의도적인 선택**이에요. 실서비스로 갈 거면 여기가 1번 교체 대상입니다.
+
+## 데모 시나리오
+
+| # | 화면 | 동작 | 볼 것 |
+|---|---|---|---|
+| 1 | `/login` | `박하은(demo03)` 버튼 클릭 | 헤더에 "박하은님" |
+| 2 | `/` | 카테고리 `운동/스포츠` + 지역 `판교` | 12개 → **3개**로 좁혀짐 |
+| 3 | `/groups/1` | 「반코트 배드민턴」 → **가입하기** | 멤버 **25 → 26** |
+| 4 | 같은 화면 | 정모 「8월 정기 셔틀 대회」 **참석 신청** | 참석 **8 → 9**, 명단에 박하은 |
+| 5 | `/groups/new` | 새 모임 개설 | 홈 목록 **최상단**에 등장 |
+| 6 | — | 청중에게 URL 공유 → 각자 로그인 후 5번 모임 가입 | 새로고침마다 멤버 수 상승 |
+
+시드 숫자(운동/스포츠+판교 = 3개, 반코트 = 25명)는 2·3번의 판정 기준입니다. **시드를 바꾸면 시나리오도 같이 바꿔야 해요.**
+
+## 데모 전 리셋
+
+공개 앱이라 청중이 데이터를 어지럽힙니다. 리허설·재시연 전에 `db/seed.sql`을 다시 실행하면 위 표의 전제조건이 그대로 복원됩니다.
+
+```
+Supabase Studio → SQL Editor → db/seed.sql 붙여넣고 Run
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+> ⚠️ 맨 위 `TRUNCATE`가 전부 지웁니다. **데모 진행 중에는 돌리지 마세요.**
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 스택
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| 층 | 선택 | 왜 |
+|---|---|---|
+| 앱 | Next.js 16 App Router (Server Components + Server Actions) | 별도 API 층 없이 서버에서 DB를 직접 읽는다 |
+| DB | Supabase Postgres, `@supabase/supabase-js` | HTTP(PostgREST) 방식이라 서버리스 커넥션 풀 문제가 없다 |
+| 인증 | `users` 테이블 + HMAC 서명 httpOnly 쿠키 | Supabase Auth는 이메일 형식을 강요해서 "쉬운 id/pw"와 안 맞았다 |
+| 권한 | RLS deny-by-default (정책 **0개**) | 모든 접근이 서버 경유. anon 정책을 추가하면 브라우저에 DB가 열린다 — 추가 금지 |
+| 커버 | 카테고리별 그라데이션 + 이모지 | 이미지 업로드·외부 URL 없음. 도메인 설정·CSP·로딩 실패를 통째로 회피 |
+| 배포 | Vercel, `main` push = 자동 배포 | CI 없음. 검증은 라이브 실측 |
 
-## Learn More
+## 로컬 실행
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+# .env.local 에 두 줄
+#   SUPABASE_URL=https://<project-ref>.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY=<service_role 키>
+npm run dev     # http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+처음이라면 `db/schema.sql` → `db/seed.sql` 순서로 Supabase에 적용하세요.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 주의
 
-## Deploy on Vercel
+- **`npm run dev`가 떠 있을 때 `npm run build`를 돌리지 마세요.** 둘이 `.next/`를 공유해서 브라우저가 낡은 번들을 계속 받습니다. 에러가 안 나고 "고친 게 반영이 안 되는" 증상으로만 나타나요. 타입 확인만 필요하면 `npx tsc --noEmit`.
+- `npm run lint`는 **타입체크를 하지 않습니다.** 타입 오류는 `npm run build`에서만 드러나요.
+- `SUPABASE_SERVICE_ROLE_KEY`는 RLS를 우회합니다. `NEXT_PUBLIC_` 접두사를 절대 붙이지 마세요.
+- `/api/health` — 배포 진단용. 환경변수 존재 여부와 DB 접속 결과만 돌려주고 값은 노출하지 않습니다.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 알려진 한계 (프로토타입이라 의도적으로 안 만든 것)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+이미지 업로드 · 실제 회원가입 · 비밀번호 관리 · 댓글/게시판 · 채팅 · 알림 · 결제 · 지도 ·
+추천 알고리즘 · 연령 설정 · "최근 본 모임" · 관리자 화면 · 테스트 코드 · CI.
