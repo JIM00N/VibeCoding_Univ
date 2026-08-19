@@ -1,7 +1,8 @@
 import { getDb } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/session";
+import { broadcastNewMessage } from "@/lib/realtime";
 
-// 채팅은 3초 폴링으로 갱신한다 (Supabase Realtime 미사용 — anon 키 노출과 RLS 개방을 피하려고. D-11)
+// 채팅 갱신은 Supabase Realtime 브로드캐스트(WebSocket) + 폴백 폴링 (D-16)
 export const dynamic = "force-dynamic";
 
 const LIMIT = 200;
@@ -89,6 +90,9 @@ export async function POST(req: Request, ctx: Ctx) {
     .insert({ group_id: g.groupId!, user_id: g.user!.id, body: body.slice(0, MAX_BODY) });
 
   if (error) return Response.json({ error: "전송에 실패했어요." }, { status: 500 });
+
+  // 같은 방에 있는 사람들에게 소켓으로 신호를 쏜다. 실패해도 폴백 폴링이 있으니 응답은 성공으로 준다.
+  await broadcastNewMessage(g.groupId!);
 
   return Response.json({ ok: true });
 }

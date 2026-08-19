@@ -27,7 +27,7 @@
 
 | 화면 | 경로 | 누가 |
 |---|---|---|
-| 모임 채팅방 | `/groups/[id]/chat` | 그 모임 **멤버만**. 3초마다 새 메시지가 자동으로 뜬다 |
+| 모임 채팅방 | `/groups/[id]/chat` | 그 모임 **멤버만**. **WebSocket** 으로 새 메시지가 즉시 뜬다 (입력창 아래 초록 점 = 연결됨) |
 | 마이페이지 | `/me` | 로그인한 사람. 가입한 모임을 **모임장인 것부터** 보여준다 |
 | 프로필 수정 · 회원 탈퇴 | `/me/edit` | 본인. 탈퇴는 **로그인 아이디를 직접 입력해야** 실행된다 |
 | 모임 관리 | `/groups/[id]/manage` | **모임장만**. 멤버 내보내기, 정모 추가·삭제 |
@@ -56,15 +56,18 @@ Supabase Studio → SQL Editor → db/seed.sql 붙여넣고 Run
 | 인증 | `users` 테이블 + HMAC 서명 httpOnly 쿠키 | Supabase Auth는 이메일 형식을 강요해서 "쉬운 id/pw"와 안 맞았다 |
 | 권한 | RLS deny-by-default (정책 **0개**) | 모든 접근이 서버 경유. anon 정책을 추가하면 브라우저에 DB가 열린다 — 추가 금지 |
 | 커버 | 카테고리별 그라데이션 + 이모지 | 이미지 업로드·외부 URL 없음. 도메인 설정·CSP·로딩 실패를 통째로 회피 |
-| 배포 | Vercel, `main` push = 자동 배포 | CI 없음. 검증은 라이브 실측 |
+| 실시간 | Supabase Realtime 브로드캐스트(WebSocket) + 폴백 폴링 | Vercel 서버리스는 WebSocket 서버를 못 띄운다. 소켓은 **"새 메시지 왔다"는 신호만** 나르고 내용은 인증된 API 로만 나가서, RLS 정책 0개를 유지한 채 실시간이 된다 |
+| 배포 | Vercel, `main` push = 자동 배포 | 작업은 브랜치 → PR → 머지. CI 는 lint+build 만 |
 
 ## 로컬 실행
 
 ```bash
 npm install
-# .env.local 에 두 줄
+# .env.local 에 네 줄
 #   SUPABASE_URL=https://<project-ref>.supabase.co
-#   SUPABASE_SERVICE_ROLE_KEY=<service_role 키>
+#   SUPABASE_SERVICE_ROLE_KEY=<service_role 키>          ← 서버 전용
+#   NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+#   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...  ← 채팅 소켓용(브라우저에 노출됨)
 npm run dev     # http://localhost:3000
 ```
 
@@ -76,6 +79,7 @@ npm run dev     # http://localhost:3000
 - `npm run lint`는 **타입체크를 하지 않습니다.** 타입 오류는 `npm run build`에서만 드러나요.
 - `SUPABASE_SERVICE_ROLE_KEY`는 RLS를 우회합니다. `NEXT_PUBLIC_` 접두사를 절대 붙이지 마세요.
 - `/api/health` — 배포 진단용. 환경변수 존재 여부와 DB 접속 결과만 돌려주고 값은 노출하지 않습니다.
+- **`NEXT_PUBLIC_*` 는 빌드 시점에 번들에 박힙니다.** Vercel 에 추가한 뒤 **재배포하지 않으면 적용되지 않아요** — 그 경우 채팅은 소켓 없이 3초 폴링으로 동작합니다(죽지는 않음).
 
 ## 알려진 한계 (프로토타입이라 의도적으로 안 만든 것)
 

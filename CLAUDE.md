@@ -24,6 +24,7 @@ UI 문구·오류 메시지·주석·커밋 메시지는 **한국어(해요체)*
 
 - Next.js 16 App Router 단일 앱 — Server Component가 DB를 직접 읽는다. **별도 API 층 없음**
 - DB는 Supabase Postgres, `@supabase/supabase-js`(PostgREST) 경유 — 서버리스 커넥션 풀 문제를 회피
+- 채팅은 Supabase Realtime 브로드캐스트(WebSocket). **소켓은 신호만 나르고 내용은 인증된 API 로만** 나간다(D-16)
 - **작업은 브랜치 → PR → 머지.** `main` push = 즉시 프로덕션이라 직접 커밋하지 않는다 (D-15)
 - CI(`.github/workflows/ci.yml`)는 `npm run lint` + `npm run build`만 돈다. **런타임 오류·SQL 회귀는 못 잡는다** — 실 보증은 PR 프리뷰 URL 클릭과 라이브 실측이 담당
 - 라이브: https://vibe-coding-univ.vercel.app · Supabase 프로젝트 `gehpmoybbfmmlwotqixk`
@@ -54,6 +55,7 @@ build가 dev의 매니페스트를 덮어쓴다. 증상이 에러가 아니라 *
 - **RLS 정책을 추가하지 말 것.** 정책 0개(deny-by-default)가 의도된 설계(D-10). 모든 접근은 서버 경유다
 - **`db/seed.sql`을 데모 진행 중에 실행 금지.** 맨 위 `TRUNCATE`가 전부 지운다. 리셋은 발표 직전에 한 번만
 - 시드 숫자(`운동/스포츠+판교 = 3개`, `반코트 배드민턴 = 25명`, `박하은 미가입`)는 **데모 시나리오의 판정 기준**이다. 시드를 바꾸면 `PRD.md` §3과 `README.md`의 시나리오도 같이 바꾼다
+- **Realtime 브로드캐스트 페이로드에 메시지 본문을 담지 말 것.** 채널은 공개라 비멤버도 구독할 수 있다. 신호만 쏘는 게 RLS 정책 0개를 유지하는 전제다(D-16)
 - 포매터 없음(Prettier·Biome 전무). 임의 도입·전체 재포맷 금지 — 기존 코드 관례를 따른다
 
 ## 함정 (실측으로 확인된 것)
@@ -61,4 +63,5 @@ build가 dev의 매니페스트를 덮어쓴다. 증상이 에러가 아니라 *
 - `supabase-js`는 생성된 타입이 없으면 **many-to-one 임베드도 배열로 추론**한다. 실제 응답은 객체 — `app/groups/[id]/page.tsx`의 `single()` 헬퍼를 쓴다 (I-3)
 - 서버 액션을 HTTP로 직접 호출할 땐 **`multipart/form-data`여야 한다.** urlencoded로 보내면 **200이 오는데 아무 일도 안 일어난다** (I-6)
 - 환경변수는 기존 배포에 **소급 적용되지 않는다.** 추가 후 반드시 Redeploy (I-2)
+- **`NEXT_PUBLIC_*` 는 빌드 시점 인라인이다.** Vercel 에 추가만 하고 재배포하지 않으면 안 먹는다 — 채팅이 조용히 폴링으로 강등된다
 - `/api/health` — 배포 진단용. 환경변수 존재 여부·DB 접속 결과만 돌려주고 값은 노출하지 않는다
