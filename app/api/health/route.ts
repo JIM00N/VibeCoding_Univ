@@ -13,6 +13,9 @@ export async function GET() {
     urlHost: url ? url.replace(/^https?:\/\//, "").split("/")[0] : null,
     keyLength: key ? key.length : 0,
     runtime: process.version,
+    // 채팅 소켓용 공개 환경변수 (없으면 채팅이 폴링으로 강등된다)
+    hasPublicSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+    hasPublishableKey: !!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   };
 
   if (url && key) {

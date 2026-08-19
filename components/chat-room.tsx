@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getBrowserClient } from "@/lib/supabase-browser";
+import { CHAT_EVENT, chatTopic } from "@/lib/chat-channel";
 
 export type ChatMessage = {
   id: number;
@@ -10,7 +12,9 @@ export type ChatMessage = {
   nickname: string;
 };
 
-const POLL_MS = 3000;
+// 소켓이 붙어 있으면 폴링은 안전망 역할만 한다(놓친 이벤트·순단 대비). 못 붙으면 원래대로 3초.
+const POLL_LIVE_MS = 20000;
+const POLL_FALLBACK_MS = 3000;
 
 // timeZone 을 못박아야 서버/클라이언트 렌더가 같아진다 (하이드레이션 불일치 방지)
 const timeFmt = new Intl.DateTimeFormat("ko-KR", {
@@ -32,6 +36,7 @@ export default function ChatRoom({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -45,10 +50,29 @@ export default function ChatRoom({
     }
   }, [groupId]);
 
+  // 소켓: Supabase Realtime 브로드캐스트. 신호만 받고 내용은 인증된 API 로 가져온다.
   useEffect(() => {
-    const timer = setInterval(load, POLL_MS);
+    const sb = getBrowserClient();
+    if (!sb) return; // 공개 환경변수가 없으면 폴링만으로 동작
+
+    const channel = sb
+      .channel(chatTopic(groupId))
+      .on("broadcast", { event: CHAT_EVENT }, () => {
+        void load();
+      })
+      .subscribe((status) => setLive(status === "SUBSCRIBED"));
+
+    return () => {
+      setLive(false);
+      void sb.removeChannel(channel);
+    };
+  }, [groupId, load]);
+
+  // 폴백 폴링 — 소켓이 붙었으면 간격을 늘려 안전망으로만 둔다
+  useEffect(() => {
+    const timer = setInterval(load, live ? POLL_LIVE_MS : POLL_FALLBACK_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, live]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -131,7 +155,13 @@ export default function ChatRoom({
         </button>
       </form>
       {error && <p className="mt-1.5 text-[13px] text-red-600">{error}</p>}
-      <p className="mt-1 text-[11px] text-slate-300">3초마다 새 메시지를 확인해요.</p>
+      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-300">
+        <span
+          aria-hidden
+          className={`inline-block w-1.5 h-1.5 rounded-full ${live ? "bg-emerald-500" : "bg-slate-300"}`}
+        />
+        {live ? "실시간으로 연결됐어요." : "연결 중 — 새 메시지는 몇 초 안에 보여요."}
+      </p>
     </div>
   );
 }
