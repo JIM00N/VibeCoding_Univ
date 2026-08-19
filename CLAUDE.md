@@ -24,7 +24,8 @@ UI 문구·오류 메시지·주석·커밋 메시지는 **한국어(해요체)*
 
 - Next.js 16 App Router 단일 앱 — Server Component가 DB를 직접 읽는다. **별도 API 층 없음**
 - DB는 Supabase Postgres, `@supabase/supabase-js`(PostgREST) 경유 — 서버리스 커넥션 풀 문제를 회피
-- CI 없음. **`main` push = 즉시 배포.** 검증은 로컬 빌드 + 라이브 실측
+- **작업은 브랜치 → PR → 머지.** `main` push = 즉시 프로덕션이라 직접 커밋하지 않는다 (D-15)
+- CI(`.github/workflows/ci.yml`)는 `npm run lint` + `npm run build`만 돈다. **런타임 오류·SQL 회귀는 못 잡는다** — 실 보증은 PR 프리뷰 URL 클릭과 라이브 실측이 담당
 - 라이브: https://vibe-coding-univ.vercel.app · Supabase 프로젝트 `gehpmoybbfmmlwotqixk`
 
 ## 명령어
