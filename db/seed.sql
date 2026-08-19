@@ -1,7 +1,7 @@
 -- 계모임 시드 (PRD §5.3) — 재실행 가능. 데모 직전 리셋 스크립트를 겸한다.
 -- ⚠️ 맨 위 TRUNCATE 가 기존 데이터를 전부 지운다. 데모 중에는 돌리지 말 것.
 
-truncate attendances, memberships, events, groups, users restart identity cascade;
+truncate messages, attendances, memberships, events, groups, users restart identity cascade;
 
 -- 1) 계정 40개 — 전부 비밀번호 1234.
 --    로그인 화면에는 demo01~demo08 만 버튼으로 노출하고, 나머지는 직접 입력용(청중 다수 대비).
@@ -105,7 +105,33 @@ cross join lateral (
   limit 8
 ) u;
 
--- 7) 자가 검증 — 아래 3줄이 전부 ok 여야 시드가 성공한 것이다
+-- 7) 한 줄 소개 (마이페이지 표시용)
+update users set bio = v.bio
+from (values
+  ('demo01','주 3회는 라켓을 잡아야 사는 사람'),
+  ('demo03','새로운 모임 구경 다니는 중이에요'),
+  ('demo08','보드게임 200종 정도 해봤습니다')
+) as v(login_id, bio)
+where users.login_id = v.login_id;
+
+-- 8) 채팅 시드 — 빈 채팅방은 데모에서 죽어 보인다
+insert into messages (group_id, user_id, body, created_at)
+select g.id, u.id, v.body, now() - (v.mins || ' minutes')::interval
+from (values
+  ('반코트 배드민턴 [NEW!]', 'demo01', '이번 주 금요일 A코트 예약 완료했어요! 8시부터입니다', 320),
+  ('반코트 배드민턴 [NEW!]', 'demo15', '오 좋아요 저 갑니다 🏸', 300),
+  ('반코트 배드민턴 [NEW!]', 'demo22', '라켓 하나 더 빌릴 수 있을까요? 친구 데려가려고요', 240),
+  ('반코트 배드민턴 [NEW!]', 'demo01', '넉넉해요~ 그냥 오시면 됩니다', 232),
+  ('반코트 배드민턴 [NEW!]', 'demo29', '저는 이번 주는 못 가고 다음 주에 뵐게요 ㅠㅠ', 95),
+  ('판교역 보드게임',        'demo08', '오늘 신작 두 개 가져갑니다. 룰 어려운 거 아니니 걱정 마세요', 180),
+  ('판교역 보드게임',        'demo13', '몇 시까지 가면 될까요?', 150),
+  ('판교역 보드게임',        'demo08', '7시부터 시작하는데 늦게 오셔도 중간 합류 됩니다', 143),
+  ('판교역 보드게임',        'demo34', '퇴근하고 바로 갈게요!', 40)
+) as v(gname, login_id, body, mins)
+join groups g on g.name = v.gname
+join users  u on u.login_id = v.login_id;
+
+-- 9) 자가 검증 — 아래 3줄이 전부 ok 여야 시드가 성공한 것이다
 select case when count(*) = 3 then 'ok' else 'FAIL' end as "시나리오2: 운동/스포츠+판교=3", count(*)
   from groups where category = '운동/스포츠' and region = '판교';
 select case when count(*) = 25 then 'ok' else 'FAIL' end as "시나리오3: 반코트 멤버=25", count(*)

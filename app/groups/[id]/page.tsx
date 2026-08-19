@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/session";
 import { categoryOf, coverStyle } from "@/lib/constants";
-import { joinGroup, leaveGroup, createEvent, toggleAttend } from "@/app/actions";
+import { joinGroup, leaveGroup, toggleAttend } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -136,12 +136,41 @@ export default async function GroupPage({ params }: PageProps<"/groups/[id]">) {
               </form>
             )}
           </div>
+
+          {(isMember || isOwner) && (
+            <div className="mt-2.5 flex gap-2">
+              <Link
+                href={`/groups/${groupId}/chat`}
+                className="inline-flex items-center justify-center h-11 px-5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700"
+              >
+                채팅방 들어가기
+              </Link>
+              {isOwner && (
+                <Link
+                  href={`/groups/${groupId}/manage`}
+                  className="inline-flex items-center justify-center h-11 px-5 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:border-slate-300"
+                >
+                  모임 관리
+                </Link>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* 정모 일정 (FR-11~13) */}
       <section className="mt-5 rounded-2xl bg-white border border-slate-200 p-5">
         <h2 className="font-bold">정모 일정</h2>
+
+        {isOwner && (
+          <p className="mt-1 text-[13px] text-slate-400">
+            정모 추가·삭제는{" "}
+            <Link href={`/groups/${groupId}/manage`} className="text-blue-600 hover:underline">
+              모임 관리
+            </Link>
+            에서 할 수 있어요.
+          </p>
+        )}
 
         {events.length === 0 ? (
           <p className="mt-3 text-sm text-slate-400">아직 잡힌 정모가 없어요.</p>
@@ -184,24 +213,6 @@ export default async function GroupPage({ params }: PageProps<"/groups/[id]">) {
           </ul>
         )}
 
-        {isOwner && (
-          <form action={createEvent} className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
-            <input type="hidden" name="group_id" value={groupId} />
-            <div className="grid gap-2">
-              <input name="title" placeholder="정모 제목" required
-                className="h-10 px-3 rounded-lg border border-slate-200 text-sm outline-none focus:border-blue-400" />
-              <div className="grid gap-2 sm:grid-cols-2">
-                <input name="starts_at" type="datetime-local" required
-                  className="h-10 px-3 rounded-lg border border-slate-200 text-sm outline-none focus:border-blue-400" />
-                <input name="place" placeholder="장소" required
-                  className="h-10 px-3 rounded-lg border border-slate-200 text-sm outline-none focus:border-blue-400" />
-              </div>
-            </div>
-            <button className="h-10 px-4 rounded-lg bg-slate-900 text-white text-sm font-semibold self-end">
-              정모 추가
-            </button>
-          </form>
-        )}
       </section>
 
       {/* 멤버 */}

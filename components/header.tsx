@@ -28,7 +28,12 @@ export default async function Header() {
               >
                 모임 만들기
               </Link>
-              <span className="text-sm text-slate-600 hidden sm:inline">{user.nickname}님</span>
+              <Link
+                href="/me"
+                className="text-sm text-slate-600 hover:text-blue-700 hidden sm:inline"
+              >
+                {user.nickname}님
+              </Link>
               <form action={logout}>
                 <button className="h-9 px-3 rounded-lg text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-100">
                   로그아웃
