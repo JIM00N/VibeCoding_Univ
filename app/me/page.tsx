@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getDb } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/session";
+import { isSeedAccount } from "@/lib/constants";
 import GroupCard, { type GroupCardData } from "@/components/group-card";
 
 export const dynamic = "force-dynamic";
@@ -29,9 +30,13 @@ export default async function MyPage({ searchParams }: PageProps<"/me">) {
   const db = getDb();
   const { data: profile } = await db
     .from("users")
-    .select("login_id, nickname, bio")
+    .select("login_id, nickname, bio, email")
     .eq("id", user.id)
     .maybeSingle();
+
+  // 임시계정은 비밀번호 자체를 못 바꾸니 이메일도 필요 없다 — 그쪽엔 재촉하지 않는다(I-11).
+  const loginId = profile?.login_id ?? user.login_id;
+  const needsEmail = !isSeedAccount(loginId) && !profile?.email;
 
   const { data: memberRows } = await db
     .from("memberships")
@@ -72,6 +77,13 @@ export default async function MyPage({ searchParams }: PageProps<"/me">) {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
+      {needsEmail && (
+        <p className="mb-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-900">
+          이메일이 등록돼 있지 않아요. 비밀번호를 잊으면 찾을 방법이 없으니{" "}
+          <Link href="/me/edit" className="font-semibold underline">프로필 수정</Link>에서 등록해주세요.
+        </p>
+      )}
+
       {(saved === "1" || saved === "pw") && (
         <p className="mb-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm text-blue-800">
           {saved === "pw" ? "비밀번호를 바꿨어요. 다음 로그인부터 새 비밀번호를 써주세요." : "프로필을 저장했어요."}

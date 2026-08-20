@@ -272,17 +272,27 @@ export async function toggleAttend(formData: FormData) {
 
 /* ────────────── 마이페이지 ────────────── */
 
-/** 프로필 수정 — 닉네임·한 줄 소개만. 비밀번호는 바꾸지 않는다(공유 데모 계정이라 바꾸면 남이 못 들어온다). */
+/** 프로필 수정 — 닉네임·한 줄 소개·이메일. 비밀번호는 이 폼이 아니라 changePassword 로 바꾼다.
+ *  이메일을 여기서도 고칠 수 있어야 한다 — 가입 폼에만 두면 오타를 낸 사람과
+ *  이메일이 없던 시절에 가입한 사람이 `/forgot` 을 영영 못 쓴다(I-11). */
 export async function updateProfile(formData: FormData) {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=%2Fme%2Fedit");
 
   const nickname = String(formData.get("nickname") ?? "").trim();
   const bio = String(formData.get("bio") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
   if (!nickname || nickname.length > 20) redirect("/me/edit?error=nickname");
 
-  await getDb().from("users").update({ nickname, bio: bio.slice(0, 100) }).eq("id", user.id);
+  // 임시계정은 비밀번호를 못 바꾸니 이메일도 받지 않는다 — 공유 계정에 남의 주소를 박아둘 이유가 없다(D-12).
+  const seed = isSeedAccount(user.login_id);
+  if (!seed && (!EMAIL.test(email) || email.length > 100)) redirect("/me/edit?error=email");
+
+  const patch = seed
+    ? { nickname, bio: bio.slice(0, 100) }
+    : { nickname, bio: bio.slice(0, 100), email };
+  await getDb().from("users").update(patch).eq("id", user.id);
 
   revalidatePath("/", "layout");
   redirect("/me?saved=1");
