@@ -40,3 +40,10 @@ export function coverStyle(category: string) {
   const c = categoryOf(category);
   return { backgroundImage: `linear-gradient(135deg, ${c.from}, ${c.to})` };
 }
+
+// 시드 임시계정(demo01~demo40)은 여러 사람이 나눠 쓴다. 한 명이 비밀번호를 바꾸면 같은 계정으로
+// 들어오려던 다른 청중이 못 들어오고, 시드를 다시 돌리기 전엔 복구도 안 된다 — 변경·재설정을 막는다(D-12).
+// 가입 쪽에서 `demo`로 시작하는 아이디를 아예 거부하므로(D-22) 접두사만 봐도 시드 계정인지 갈린다.
+export function isSeedAccount(loginId: string): boolean {
+  return loginId.toLowerCase().startsWith("demo");
+}

@@ -24,7 +24,7 @@ export default async function MyPage({ searchParams }: PageProps<"/me">) {
   if (!user) redirect("/login?next=%2Fme");
 
   const sp = await searchParams;
-  const saved = one(sp.saved) === "1";
+  const saved = one(sp.saved);
 
   const db = getDb();
   const { data: profile } = await db
@@ -72,9 +72,9 @@ export default async function MyPage({ searchParams }: PageProps<"/me">) {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
-      {saved && (
+      {(saved === "1" || saved === "pw") && (
         <p className="mb-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm text-blue-800">
-          프로필을 저장했어요.
+          {saved === "pw" ? "비밀번호를 바꿨어요. 다음 로그인부터 새 비밀번호를 써주세요." : "프로필을 저장했어요."}
         </p>
       )}
 
