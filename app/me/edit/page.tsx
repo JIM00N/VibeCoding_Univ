@@ -21,7 +21,7 @@ export default async function EditProfilePage({ searchParams }: PageProps<"/me/e
   const db = getDb();
   const { data: profile } = await db
     .from("users")
-    .select("login_id, nickname, bio")
+    .select("login_id, nickname, bio, email")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -35,6 +35,7 @@ export default async function EditProfilePage({ searchParams }: PageProps<"/me/e
 
   const loginId = profile?.login_id ?? user.login_id;
   const seedAccount = isSeedAccount(loginId);
+  const email = (profile?.email as string | null) ?? "";
 
   const field =
     "w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400";
@@ -81,6 +82,33 @@ export default async function EditProfilePage({ searchParams }: PageProps<"/me/e
             className={field}
           />
         </div>
+
+        {!seedAccount && (
+          <div>
+            <label className="block text-[13px] font-semibold mb-1.5">이메일</label>
+            <input
+              name="email"
+              type="email"
+              defaultValue={email}
+              required
+              maxLength={100}
+              autoComplete="email"
+              placeholder="you@example.com"
+              className={field}
+            />
+            {error === "email" ? (
+              <p className="mt-1 text-sm text-red-600">이메일 형식이 아니에요. `이름@도메인` 꼴로 적어주세요.</p>
+            ) : email ? (
+              <p className="mt-1 text-[12px] text-slate-400">
+                비밀번호를 잊었을 때 <Link href="/forgot" className="text-blue-600 hover:underline">찾기</Link>에 쓰는 값이에요. 메일은 보내지 않아요.
+              </p>
+            ) : (
+              <p className="mt-1 text-[12px] text-amber-700">
+                아직 이메일이 없어요. <b>지금 등록하지 않으면 비밀번호를 잊었을 때 찾을 수 없어요.</b>
+              </p>
+            )}
+          </div>
+        )}
 
         <button className="w-full h-12 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700">
           저장하기

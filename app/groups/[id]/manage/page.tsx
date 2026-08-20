@@ -156,7 +156,7 @@ export default async function ManagePage({ params }: PageProps<"/groups/[id]/man
                     모임장
                   </span>
                 )}
-                <span className="ml-2 text-[12px] text-slate-400">
+                <span className="block sm:inline sm:ml-2 text-[12px] text-slate-400">
                   {joinFmt.format(new Date(m.joinedAt))} 가입
                 </span>
               </div>
