@@ -14,6 +14,7 @@ function one(v: string | string[] | undefined): string {
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const sp = await searchParams;
   const failed = one(sp.error) === "1";
+  const reset = one(sp.reset) === "1";
   const next = one(sp.next) || "/";
 
   const { data } = await getDb()
@@ -33,6 +34,12 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           임시계정으로 바로 들어오거나, 내 계정을 새로 만들 수 있어요.
         </p>
       </div>
+
+      {reset && (
+        <p className="mt-5 rounded-xl bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm text-blue-800">
+          비밀번호를 바꿨어요. 새 비밀번호로 로그인해주세요.
+        </p>
+      )}
 
       {accounts.length > 0 && (
         <div className="mt-6">
@@ -72,7 +79,10 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400"
         />
         {failed && (
-          <p className="text-sm text-red-600">아이디 또는 비밀번호가 달라요.</p>
+          <p className="text-sm text-red-600">
+            아이디 또는 비밀번호가 달라요.{" "}
+            <Link href="/forgot" className="underline">비밀번호 찾기</Link>
+          </p>
         )}
         <button className="w-full h-11 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700">
           로그인
@@ -87,6 +97,8 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         >
           회원가입
         </Link>
+        {" · "}
+        <Link href="/forgot" className="text-blue-600 hover:underline">비밀번호 찾기</Link>
       </p>
 
       <p className="mt-6 text-center text-xs text-slate-400">

@@ -4,7 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/supabase";
 import { getCurrentUser, setSession, clearSession } from "@/lib/session";
-import { CATEGORIES, REGIONS } from "@/lib/constants";
+import { CATEGORIES, REGIONS, isSeedAccount } from "@/lib/constants";
+
+// 이메일은 형식만 본다 — 발송을 안 하니 도달 가능한 주소인지는 확인할 방법이 없다(FR-19).
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // redirect() 는 예외를 던져서 흐름을 끊는다 — try/catch 안에 넣지 말 것.
 
@@ -13,13 +16,16 @@ function safeNext(value: unknown): string {
   return v.startsWith("/") && !v.startsWith("//") ? v : "/";
 }
 
-/** FR-18 회원가입 — 아이디·비밀번호·닉네임만 받는다. 만들자마자 로그인 상태가 된다.
+/** FR-18 회원가입 — 아이디·비밀번호·닉네임·이메일. 만들자마자 로그인 상태가 된다.
+ *  이메일은 비밀번호를 잊었을 때 대조할 유일한 단서다(FR-19). 메일은 보내지 않는다.
  *  비밀번호는 D-4 그대로 평문 저장이라 화면에서 "평소 쓰는 비밀번호는 넣지 말라"고 알린다. */
 export async function signup(formData: FormData) {
   const loginId = String(formData.get("login_id") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const passwordConfirm = String(formData.get("password_confirm") ?? "");
   const nickname = String(formData.get("nickname") ?? "").trim();
+  // 재설정 때 대조하려면 저장 형태와 비교 형태가 같아야 한다 — 양쪽 다 소문자로 맞춘다.
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const next = safeNext(formData.get("next"));
 
   // 실패해도 아이디·닉네임은 돌려준다 — 처음부터 다시 타이핑하게 만들지 않는다.
@@ -27,13 +33,17 @@ export async function signup(formData: FormData) {
     `/signup?error=${code}` +
     `&login_id=${encodeURIComponent(loginId)}` +
     `&nickname=${encodeURIComponent(nickname)}` +
+    `&email=${encodeURIComponent(email)}` +
     `&next=${encodeURIComponent(next)}`;
 
   // 로그인은 아이디를 그대로(대소문자 구분) 비교한다 — 여기서 소문자만 받아 "Demo01/demo01" 혼동을 없앤다.
   if (!/^[a-z0-9_]{4,20}$/.test(loginId)) redirect(fail("id"));
+  // `demo`로 시작하는 아이디는 시드 임시계정 몫이다. 여기서 막아야 isSeedAccount 판정이 흔들리지 않는다(D-22).
+  if (isSeedAccount(loginId)) redirect(fail("reserved"));
   if (password.length < 4 || password.length > 30) redirect(fail("pw"));
   if (password !== passwordConfirm) redirect(fail("pw2"));
   if (nickname.length < 1 || nickname.length > 20) redirect(fail("nickname"));
+  if (!EMAIL.test(email) || email.length > 100) redirect(fail("email"));
 
   const db = getDb();
   const { data: taken } = await db
@@ -45,7 +55,7 @@ export async function signup(formData: FormData) {
 
   const { data, error } = await db
     .from("users")
-    .insert({ login_id: loginId, password, nickname })
+    .insert({ login_id: loginId, password, nickname, email })
     .select("id")
     .single();
 
@@ -78,6 +88,40 @@ export async function login(formData: FormData) {
   await setSession(data.id as number);
   revalidatePath("/", "layout");
   redirect(next);
+}
+
+/** FR-19 비밀번호 찾기 — 아이디 + 이메일이 맞으면 새 비밀번호로 덮는다.
+ *  메일을 보내지 않으므로 재설정 토큰도 만료도 없다. 가입 때 적은 이메일이 곧 열쇠다. */
+export async function resetPassword(formData: FormData) {
+  const loginId = String(formData.get("login_id") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const password = String(formData.get("password") ?? "");
+  const passwordConfirm = String(formData.get("password_confirm") ?? "");
+
+  const fail = (code: string) =>
+    `/forgot?error=${code}` +
+    `&login_id=${encodeURIComponent(loginId)}` +
+    `&email=${encodeURIComponent(email)}`;
+
+  if (!loginId || !EMAIL.test(email)) redirect(fail("input"));
+  // 임시계정은 여러 사람이 나눠 쓴다 — 한 명이 바꾸면 나머지가 잠긴다(D-12).
+  if (isSeedAccount(loginId)) redirect(fail("demo"));
+  if (password.length < 4 || password.length > 30) redirect(fail("pw"));
+  if (password !== passwordConfirm) redirect(fail("pw2"));
+
+  const db = getDb();
+  const { data } = await db
+    .from("users")
+    .select("id, email")
+    .eq("login_id", loginId)
+    .maybeSingle();
+
+  // 아이디가 없든 이메일이 다르든 **같은 오류**를 준다 — 어느 아이디가 존재하는지 알려주지 않기 위해서다.
+  if (!data || !data.email || data.email !== email) redirect(fail("nomatch"));
+
+  await db.from("users").update({ password }).eq("id", data.id);
+
+  redirect("/login?reset=1");
 }
 
 /** FR-2 로그아웃 */
@@ -242,6 +286,29 @@ export async function updateProfile(formData: FormData) {
 
   revalidatePath("/", "layout");
   redirect("/me?saved=1");
+}
+
+/** FR-19 비밀번호 변경 — 로그인한 사람이 현재 비밀번호를 확인하고 바꾼다. 임시계정은 막는다(D-12). */
+export async function changePassword(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login?next=%2Fme%2Fedit");
+  if (isSeedAccount(user.login_id)) redirect("/me/edit?error=pw-demo");
+
+  const current = String(formData.get("current_password") ?? "");
+  const password = String(formData.get("password") ?? "");
+  const passwordConfirm = String(formData.get("password_confirm") ?? "");
+
+  if (password.length < 4 || password.length > 30) redirect("/me/edit?error=pw");
+  if (password !== passwordConfirm) redirect("/me/edit?error=pw2");
+
+  const db = getDb();
+  const { data } = await db.from("users").select("password").eq("id", user.id).maybeSingle();
+  if (!data || data.password !== current) redirect("/me/edit?error=pw-current");
+  if (password === current) redirect("/me/edit?error=pw-same");
+
+  await db.from("users").update({ password }).eq("id", user.id);
+
+  redirect("/me?saved=pw");
 }
 
 /** 회원 탈퇴 — 되돌릴 수 없다. 로그인 아이디를 그대로 입력해야 실행된다.
