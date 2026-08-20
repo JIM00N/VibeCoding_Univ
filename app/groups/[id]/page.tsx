@@ -141,14 +141,14 @@ export default async function GroupPage({ params }: PageProps<"/groups/[id]">) {
             <div className="mt-2.5 flex gap-2">
               <Link
                 href={`/groups/${groupId}/chat`}
-                className="inline-flex items-center justify-center h-11 px-5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700"
+                className="flex-1 sm:flex-none inline-flex items-center justify-center h-11 px-5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700"
               >
                 채팅방 들어가기
               </Link>
               {isOwner && (
                 <Link
                   href={`/groups/${groupId}/manage`}
-                  className="inline-flex items-center justify-center h-11 px-5 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:border-slate-300"
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center h-11 px-5 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:border-slate-300"
                 >
                   모임 관리
                 </Link>

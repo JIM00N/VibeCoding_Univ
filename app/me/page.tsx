@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/session";
 import { isSeedAccount } from "@/lib/constants";
+import { logout } from "@/app/actions";
 import GroupCard, { type GroupCardData } from "@/components/group-card";
 
 export const dynamic = "force-dynamic";
@@ -100,12 +101,20 @@ export default async function MyPage({ searchParams }: PageProps<"/me">) {
               {profile?.bio ? profile.bio : <span className="text-slate-300">한 줄 소개가 아직 없어요</span>}
             </p>
           </div>
-          <Link
-            href="/me/edit"
-            className="shrink-0 inline-flex items-center h-9 px-3.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:border-slate-300"
-          >
-            프로필 수정
-          </Link>
+          {/* 로그아웃은 모바일 헤더에 자리가 없어 여기로 내려왔다 */}
+          <div className="shrink-0 flex flex-col items-end gap-2">
+            <Link
+              href="/me/edit"
+              className="inline-flex items-center h-9 px-3.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:border-slate-300"
+            >
+              프로필 수정
+            </Link>
+            <form action={logout}>
+              <button className="h-9 px-3.5 rounded-lg text-sm text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+                로그아웃
+              </button>
+            </form>
+          </div>
         </div>
         <p className="mt-4 text-[13px] text-slate-500">
           가입한 모임 <b className="text-slate-800">{groups.length}</b>개
