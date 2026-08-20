@@ -10,8 +10,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ko" className="h-full antialiased">
-      {/* pb-14: 모바일 하단 탭이 fixed 라 본문 끝이 가려지지 않게 자리를 비워둔다 */}
-      <body className="min-h-full flex flex-col pb-14 sm:pb-0">
+      <body className="min-h-full flex flex-col">
         {/* PRD FR-X3 */}
         <div className="bg-amber-100 text-amber-900 text-[13px] text-center px-4 py-1.5 border-b border-amber-200">
           데모용 서비스예요. 실제 개인정보는 입력하지 말아주세요.

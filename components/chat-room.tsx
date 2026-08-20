@@ -108,7 +108,7 @@ export default function ChatRoom({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-17rem)] sm:h-[calc(100dvh-13rem)] min-h-80">
+    <div className="flex flex-col h-[calc(100dvh-13rem)] min-h-80">
       <div className="flex-1 overflow-y-auto rounded-2xl bg-white border border-slate-200 p-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-center text-sm text-slate-400 py-10">
