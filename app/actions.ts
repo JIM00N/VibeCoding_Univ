@@ -13,6 +13,51 @@ function safeNext(value: unknown): string {
   return v.startsWith("/") && !v.startsWith("//") ? v : "/";
 }
 
+/** FR-18 회원가입 — 아이디·비밀번호·닉네임만 받는다. 만들자마자 로그인 상태가 된다.
+ *  비밀번호는 D-4 그대로 평문 저장이라 화면에서 "평소 쓰는 비밀번호는 넣지 말라"고 알린다. */
+export async function signup(formData: FormData) {
+  const loginId = String(formData.get("login_id") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+  const passwordConfirm = String(formData.get("password_confirm") ?? "");
+  const nickname = String(formData.get("nickname") ?? "").trim();
+  const next = safeNext(formData.get("next"));
+
+  // 실패해도 아이디·닉네임은 돌려준다 — 처음부터 다시 타이핑하게 만들지 않는다.
+  const fail = (code: string) =>
+    `/signup?error=${code}` +
+    `&login_id=${encodeURIComponent(loginId)}` +
+    `&nickname=${encodeURIComponent(nickname)}` +
+    `&next=${encodeURIComponent(next)}`;
+
+  // 로그인은 아이디를 그대로(대소문자 구분) 비교한다 — 여기서 소문자만 받아 "Demo01/demo01" 혼동을 없앤다.
+  if (!/^[a-z0-9_]{4,20}$/.test(loginId)) redirect(fail("id"));
+  if (password.length < 4 || password.length > 30) redirect(fail("pw"));
+  if (password !== passwordConfirm) redirect(fail("pw2"));
+  if (nickname.length < 1 || nickname.length > 20) redirect(fail("nickname"));
+
+  const db = getDb();
+  const { data: taken } = await db
+    .from("users")
+    .select("id")
+    .eq("login_id", loginId)
+    .maybeSingle();
+  if (taken) redirect(fail("taken"));
+
+  const { data, error } = await db
+    .from("users")
+    .insert({ login_id: loginId, password, nickname })
+    .select("id")
+    .single();
+
+  // 23505 = UNIQUE 위반. 위 조회와 이 insert 사이에 같은 아이디가 들어온 경우 (청중 동시 접속, R4와 같은 규율).
+  if (error?.code === "23505") redirect(fail("taken"));
+  if (error || !data) redirect(fail("db"));
+
+  await setSession(data.id as number);
+  revalidatePath("/", "layout");
+  redirect(next);
+}
+
 /** FR-1 로그인 */
 export async function login(formData: FormData) {
   const loginId = String(formData.get("login_id") ?? "").trim();

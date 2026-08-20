@@ -30,7 +30,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         <span className="inline-grid place-items-center w-12 h-12 rounded-2xl bg-blue-600 text-white text-xl font-bold">계</span>
         <h1 className="mt-3 text-2xl font-bold">계모임에 들어가기</h1>
         <p className="mt-1.5 text-sm text-slate-500">
-          회원가입은 없어요. 아래 임시계정 중 하나를 골라주세요.
+          임시계정으로 바로 들어오거나, 내 계정을 새로 만들 수 있어요.
         </p>
       </div>
 
@@ -79,8 +79,18 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </button>
       </form>
 
+      <p className="mt-5 text-center text-sm text-slate-500">
+        내 계정이 필요하다면{" "}
+        <Link
+          href={`/signup?next=${encodeURIComponent(next)}`}
+          className="font-semibold text-blue-600 hover:underline"
+        >
+          회원가입
+        </Link>
+      </p>
+
       <p className="mt-6 text-center text-xs text-slate-400">
-        계정 40개(demo01~demo40)가 미리 만들어져 있어요.<br />
+        임시계정 40개(demo01~demo40)도 그대로 쓸 수 있어요.<br />
         <Link href="/" className="text-blue-600 hover:underline">로그인 없이 둘러보기</Link>
       </p>
     </div>
